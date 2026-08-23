@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#2563eb">
+<title>AI生産計画</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{background:#2563eb;color:white;padding:calc(18px + env(safe-area-inset-top)) 18px 18px;position:sticky;top:0;z-index:5}
+h1{font-size:22px;margin:0 0 4px}.sub{font-size:13px;opacity:.9}
+main{max-width:700px;margin:auto;padding:14px 14px 100px}
+.card{background:white;border-radius:16px;padding:18px;margin:12px 0;box-shadow:0 2px 10px #00000010}
+h2{font-size:19px;margin:0 0 10px}h3{font-size:16px;margin:16px 0 8px}
+label{display:block;font-size:13px;font-weight:600;margin:10px 0 5px}
+input,select{width:100%;padding:13px;border:1px solid #d1d5db;border-radius:10px;font-size:16px;background:white}
+button{width:100%;border:0;border-radius:11px;padding:13px 16px;margin-top:10px;font-size:16px;font-weight:600;background:#2563eb;color:white}
+button.secondary{background:#e5e7eb;color:#111827}
+.item{padding:11px 0;border-bottom:1px solid #eee}.item:last-child{border:0}
+.badge{display:inline-block;background:#dbeafe;color:#1d4ed8;padding:4px 8px;border-radius:999px;font-size:12px;margin:2px}
+.ok{color:#15803d;font-weight:700}.warn{color:#b45309;font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:9px 6px;border-bottom:1px solid #eee;text-align:left}
+.small{font-size:12px;color:#6b7280}.step{font-size:12px;color:#6b7280;margin-bottom:6px}
+</style>
+</head>
+<body>
+<header><h1>AI生産計画</h1><div class="sub">需要予測から週間生産計画を作成</div></header>
+<main id="app"></main>
+<script>
+const S={step:0,products:[],lines:[],demand:{}};
+const app=document.getElementById('app');
+function save(){localStorage.setItem('aiSeisan',JSON.stringify(S))}
+function load(){try{Object.assign(S,JSON.parse(localStorage.getItem('aiSeisan')||'{}'))}catch(e){}}
+function render(){save(); if(S.step===0)home();if(S.step===1)products();if(S.step===2)lines();if(S.step===3)demand();if(S.step===4)plan()}
+function home(){app.innerHTML=`<div class="card"><div class="step">STEP 1</div><h2>工場の生産計画を作ってみましょう</h2><p>まずは商品・ライン・需要予測を登録します。入力内容はこのiPhoneのブラウザに保存されます。</p><button onclick="S.step=1;render()">生産計画を作り始める</button></div><div class="card"><h3>現在の登録</h3><p><span class="badge">商品 ${S.products.length}件</span><span class="badge">ライン ${S.lines.length}件</span></p></div>`}
+function products(){app.innerHTML=`<div class="card"><div class="step">STEP 1 / 3</div><h2>商品を登録</h2><p class="small">AIが計画に必要な情報を集める、という想定です。</p><div id="list">${S.products.map((p,i)=>`<div class="item"><b>${p.name}</b><br><span class="small">${p.min}分/個</span></div>`).join('')}</div><label>商品名</label><input id="name" placeholder="例：唐揚げ弁当"><label>生産時間（分/個）</label><input id="min" type="number" inputmode="decimal" placeholder="例：0.5"><button onclick="addP()">商品を追加</button><button class="secondary" onclick="S.step=2;render()">次へ：ラインを登録</button></div>`}
+function addP(){let n=name.value.trim(),m=Number(min.value);if(!n||!m)return alert('商品名と生産時間を入力してください');S.products.push({name:n,min:m});render()}
+function lines(){app.innerHTML=`<div class="card"><div class="step">STEP 2 / 3</div><h2>ラインを登録</h2><div id="list">${S.lines.map(l=>`<div class="item"><b>${l.name}</b><br><span class="small">${l.hours}時間/日・${l.workers}人</span></div>`).join('')}</div><label>ライン名</label><input id="ln" placeholder="例：1号ライン"><label>1日の稼働時間</label><input id="hours" type="number" inputmode="decimal" placeholder="例：8"><label>必要人数</label><input id="workers" type="number" inputmode="numeric" placeholder="例：4"><button onclick="addL()">ラインを追加</button><button class="secondary" onclick="S.step=3;render()">次へ：需要予測</button></div>`}
+function addL(){let n=ln.value.trim(),h=Number(hours.value),w=Number(workers.value);if(!n||!h||!w)return alert('ライン名・稼働時間・人数を入力してください');S.lines.push({name:n,hours:h,workers:w});render()}
+function demand(){app.innerHTML=`<div class="card"><div class="step">STEP 3 / 3</div><h2>来週の需要予測</h2><p>来週作る必要がある数量を入力してください。</p>${S.products.map((p,i)=>`<label>${p.name}</label><input id="d${i}" type="number" inputmode="numeric" placeholder="例：10000" value="${S.demand[p.name]||''}">`).join('')}<button onclick="makePlan()">週間生産計画を作成</button><button class="secondary" onclick="S.step=1;render()">商品を修正</button></div>`}
+function makePlan(){S.products.forEach((p,i)=>S.demand[p.name]=Number(document.getElementById('d'+i).value)||0);S.step=4;render()}
+function plan(){let cap=S.lines.reduce((a,l)=>a+l.hours*60*5,0),need=S.products.reduce((a,p)=>a+(S.demand[p.name]||0)*p.min,0),ok=cap>=need;let rows=[],line=0;for(let p of S.products){let left=S.demand[p.name]||0;while(left>0&&S.lines.length){let l=S.lines[line%S.lines.length],q=Math.min(left,Math.floor(l.hours*60/p.min));if(!q)break;rows.push([['月','火','水','木','金'][Math.min(rows.length,4)],l.name,p.name,q,l.workers]);left-=q;line++}}app.innerHTML=`<div class="card"><h2>週間生産計画</h2><p class="${ok?'ok':'warn'}">${ok?'✓ 登録能力内で計画できます':'⚠ 登録されたライン能力を超えています'}</p><table><tr><th>日</th><th>ライン</th><th>商品</th><th>数量</th><th>人</th></tr>${rows.map(r=>`<tr>${r.map(x=>`<td>${x}</td>`).join('')}</tr>`).join('')}</table><button onclick="S.step=3;render()">需要予測を修正</button><button class="secondary" onclick="S.step=0;render()">ホームへ</button></div><div class="card"><h3>次のバージョン</h3><p>新商品を追加したときに、AIが「どのラインで作れますか？」「能力は？」「必要人数は？」と順番に質問する機能を追加します。</p></div>`}
+load();render();
+</script>
+</body></html>
