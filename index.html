@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#2563eb"><title>AI生産計画 v4</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{background:#2563eb;color:#fff;padding:calc(18px + env(safe-area-inset-top)) 18px 18px;position:sticky;top:0;z-index:5}h1{font-size:22px;margin:0 0 4px}.sub{font-size:13px;opacity:.9}
+main{max-width:780px;margin:auto;padding:14px 14px 100px}.card{background:#fff;border-radius:16px;padding:18px;margin:12px 0;box-shadow:0 2px 10px #00000010}
+h2{font-size:19px;margin:0 0 10px}h3{font-size:16px;margin:16px 0 8px}.small{font-size:12px;color:#6b7280}
+label{display:block;font-size:13px;font-weight:600;margin:10px 0 5px}input,select{width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;font-size:16px;background:#fff}
+button{width:100%;border:0;border-radius:11px;padding:13px 16px;margin-top:10px;font-size:16px;font-weight:600;background:#2563eb;color:#fff}
+button.secondary{background:#e5e7eb;color:#111827}button.danger{background:#dc2626}.row{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.item{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}.box{background:#f9fafb;border-radius:12px;padding:12px;margin-top:9px}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.actions button{margin:0;padding:10px;font-size:14px}
+.ok{color:#15803d;font-weight:700}.warn{color:#b45309;font-weight:700}.bad{color:#b91c1c;font-weight:700}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;margin:2px}.blue{background:#dbeafe;color:#1d4ed8}.green{background:#dcfce7;color:#166534}.red{background:#fee2e2;color:#991b1b}
+</style></head>
+<body><header><h1>AI生産計画 v4</h1><div class="sub">原料から段取り替えを自動設定</div></header><main id="app"></main>
+<script>
+const S={page:"home",materials:[],products:[],lines:[],rules:[],overrides:[]};
+const app=document.getElementById("app");
+function save(){localStorage.setItem("aiSeisanV4",JSON.stringify(S))}
+function load(){try{const x=JSON.parse(localStorage.getItem("aiSeisanV4")||"null");if(x)Object.assign(S,x)}catch(e){}}
+function go(p){S.page=p;render()} function render(){save();({home,materials,products,lines,rules,setupTable}[S.page]||home)()}
+function home(){app.innerHTML=`<div class="card"><h2>生産計画マスター</h2><p class="small">まず原料を登録し、商品に原料を紐付けます。原料間の基本切替ルールから段取り時間を自動生成します。</p>
+<button onclick="go('materials')">① 原料マスター</button><button onclick="go('products')">② 商品登録・編集</button><button onclick="go('lines')">③ ライン登録・編集</button><button onclick="go('rules')">④ 原料切替ルール</button><button onclick="go('setupTable')">⑤ 自動生成された段取り表</button></div>
+<div class="card"><b>登録状況</b><div class="box">原料 ${S.materials.length}件 ／ 商品 ${S.products.length}件 ／ ライン ${S.lines.length}件 ／ 原料ルール ${S.rules.length}件 ／ 個別修正 ${S.overrides.length}件</div></div>`}
+function materials(){app.innerHTML=`<div class="card"><h2>① 原料マスター</h2>${S.materials.map((m,i)=>`<div class="item"><b>${m.name}</b><div class="actions"><button onclick="editM(${i})">✏️ 編集</button><button class="danger" onclick="delM(${i})">🗑️ 削除</button></div></div>`).join("")}
+<label>原料名</label><input id="mn" placeholder="例：原料a"><button onclick="addM()">登録</button><button class="secondary" onclick="go('home')">戻る</button></div>`}
+function addM(){let n=mn.value.trim();if(!n)return alert("原料名を入力してください");if(S.materials.some(x=>x.name===n))return alert("同じ原料があります");S.materials.push({name:n});render()}
+function editM(i){let n=prompt("原料名",S.materials[i].name);if(n===null)return;n=n.trim();if(!n)return;let old=S.materials[i].name;S.materials[i].name=n;S.products.forEach(p=>{if(p.material===old)p.material=n});S.rules.forEach(r=>{if(r.from===old)r.from=n;if(r.to===old)r.to=n});render()}
+function delM(i){let n=S.materials[i].name;if(!confirm("原料を削除しますか？関連する商品・ルールも確認が必要です。"))return;S.materials.splice(i,1);S.products.forEach(p=>{if(p.material===n)p.material=""});S.rules=S.rules.filter(r=>r.from!==n&&r.to!==n);render()}
+function products(){app.innerHTML=`<div class="card"><h2>② 商品登録・編集</h2><p class="small">同じ原料を使う内容量違いの商品も登録できます。</p>
+${S.products.map((p,i)=>`<div class="item"><b>${p.name}</b><div class="small">原料：${p.material||"未設定"} ／ 使用量：${p.amount||"-"} ／ 内容量：${p.content||"-"} ／ ロット：${p.lot||"-"}</div><div class="actions"><button onclick="editP(${i})">✏️ 編集</button><button class="danger" onclick="delP(${i})">🗑️ 削除</button></div></div>`).join("")}
+<label>商品名</label><input id="pn" placeholder="例：A商品100g"><label>使用する原料</label><select id="pm">${S.materials.map(m=>`<option value="${m.name}">${m.name}</option>`).join("")}</select>
+<label>原料使用量（任意）</label><input id="pa" placeholder="例：100g"><label>製品内容量（任意）</label><input id="pc" placeholder="例：100g"><label>最低生産ロット（任意・個）</label><input id="pl" type="number" inputmode="numeric"><button onclick="addP()">登録</button><button class="secondary" onclick="go('home')">戻る</button></div>`}
+function addP(){let n=pn.value.trim();if(!n)return alert("商品名を入力してください");if(!S.materials.length)return alert("先に原料を登録してください");S.products.push({name:n,material:pm.value,amount:pa.value.trim(),content:pc.value.trim(),lot:+pl.value||0});render()}
+function editP(i){let p=S.products[i],n=prompt("商品名",p.name);if(n===null)return;let m=prompt("原料名（登録済みの原料から選ぶ）",p.material);if(m===null)return;let a=prompt("原料使用量",p.amount||"");if(a===null)return;let c=prompt("製品内容量",p.content||"");if(c===null)return;let l=prompt("最低生産ロット",p.lot||"");if(l===null)return;p.name=n.trim()||p.name;p.material=S.materials.some(x=>x.name===m)?m:p.material;p.amount=a;p.content=c;p.lot=+l||0;render()}
+function delP(i){if(confirm("この商品を削除しますか？")){let n=S.products[i].name;S.products.splice(i,1);S.overrides=S.overrides.filter(x=>x.from!==n&&x.to!==n);render()}}
+function lines(){app.innerHTML=`<div class="card"><h2>③ ライン登録・編集</h2>${S.lines.map((l,i)=>`<div class="item"><b>${l.name}</b><div class="small">基本必要人数：${l.workers}人</div><div class="actions"><button onclick="editL(${i})">✏️ 編集</button><button class="danger" onclick="delL(${i})">🗑️ 削除</button></div></div>`).join("")}
+<label>ライン名</label><input id="ln" placeholder="例：1号ライン"><label>基本必要人数</label><input id="lw" type="number" inputmode="numeric" placeholder="例：4"><button onclick="addL()">登録</button><button class="secondary" onclick="go('home')">戻る</button></div>`}
+function addL(){let n=ln.value.trim(),w=+lw.value;if(!n||!w)return alert("入力してください");S.lines.push({name:n,workers:w});render()}
+function editL(i){let n=prompt("ライン名",S.lines[i].name);if(n===null)return;let w=prompt("基本必要人数",S.lines[i].workers);if(w===null)return;S.lines[i].name=n.trim()||S.lines[i].name;S.lines[i].workers=+w||S.lines[i].workers;render()}
+function delL(i){if(confirm("このラインを削除しますか？")){S.lines.splice(i,1);render()}}
+function rules(){app.innerHTML=`<div class="card"><h2>④ 原料切替ルール</h2><p class="small">商品ではなく原料の切替を基本ルールにします。順方向・逆方向を別々に設定できます。</p>
+${S.rules.map((r,i)=>`<div class="item"><b>${r.from} → ${r.to}</b><div>${r.mode==="impossible"?'<span class="badge red">🚫 基本的に不可能</span>':r.mode==="conditional"?'<span class="badge">⚠️ 条件付き</span>':`<span class="badge green">✓ ${r.minutes}分</span>`}</div><div class="actions"><button onclick="editRule(${i})">✏️ 編集</button><button class="danger" onclick="delRule(${i})">🗑️ 削除</button></div></div>`).join("")}
+<h3>基本ルールを追加</h3><div class="row"><div><label>切替元原料</label><select id="rf">${S.materials.map(m=>`<option>${m.name}</option>`).join("")}</select></div><div><label>切替先原料</label><select id="rt">${S.materials.map(m=>`<option>${m.name}</option>`).join("")}</select></div></div>
+<label>ルール</label><select id="rm"><option value="time">可能：時間を設定</option><option value="conditional">条件付き</option><option value="impossible">基本的に不可能</option></select><label>時間（分）</label><input id="rv" type="number" inputmode="numeric" placeholder="例：30"><button onclick="addRule()">登録</button><button class="secondary" onclick="go('home')">戻る</button></div>`}
+function addRule(){let f=rf.value,t=rt.value,m=rm.value,v=+rv.value||0;if(!f||!t||f===t)return alert("異なる原料を選んでください");let x={from:f,to:t,mode:m,minutes:v};let i=S.rules.findIndex(r=>r.from===f&&r.to===t);if(i>=0)S.rules[i]=x;else S.rules.push(x);render()}
+function editRule(i){let r=S.rules[i],m=prompt("時間（分）。不可能なら空欄でも可",r.mode==="time"?r.minutes:"");if(m===null)return;r.mode=m.trim()===""?"impossible":"time";r.minutes=+m||0;render()}
+function delRule(i){if(confirm("この原料切替ルールを削除しますか？")){S.rules.splice(i,1);render()}}
+function autoRule(f,t){if(f===t)return {mode:"time",minutes:0,source:"同一原料"};let r=S.rules.find(x=>x.from===f&&x.to===t);return r?{...r,source:"基本ルール"}:{mode:"conditional",minutes:0,source:"未登録"}}
+function setupTable(){
+let rows=[];
+for(let a of S.products)for(let b of S.products)if(a.name!==b.name){let base=autoRule(a.material,b.material), ov=S.overrides.find(x=>x.from===a.name&&x.to===b.name);rows.push({a,b,base,ov})}
+app.innerHTML=`<div class="card"><h2>⑤ 自動生成された段取り表</h2><p class="small">商品それぞれの原料を比較し、原料切替ルールから自動判定しています。商品別の例外は上書きできます。</p>
+${rows.length?rows.map((x,i)=>{let final=x.ov?x.ov: x.base;return `<div class="item"><b>${x.a.name} → ${x.b.name}</b><div class="small">${x.a.material||"原料未設定"} → ${x.b.material||"原料未設定"}</div><div>${final.mode==="impossible"?'<span class="badge red">🚫 不可</span>':final.mode==="conditional"?'<span class="badge">⚠️ 条件確認</span>':`<span class="badge green">✓ ${final.minutes}分</span>`}${x.ov?'<span class="badge blue">個別修正</span>':''}</div><div class="actions"><button onclick="override(${i},'time')">⏱ 個別時間</button><button onclick="override(${i},'impossible')">🚫 個別不可</button></div></div>`}).join(""):'<div class="box">商品を2つ以上登録すると自動生成されます。</div>'}
+<button class="secondary" onclick="go('rules')">原料ルールを修正</button><button class="secondary" onclick="go('home')">戻る</button></div>`}
+function override(i,mode){let a=S.products.find(p=>p.name===arguments[0]);let rows=[];for(let x of S.products)for(let y of S.products)if(x.name!==y.name)rows.push({a:x,b:y});let r=rows[i];if(!r)return;let idx=S.overrides.findIndex(x=>x.from===r.a.name&&x.to===r.b.name);if(mode==="impossible"){let o={from:r.a.name,to:r.b.name,mode:"impossible",minutes:0};if(idx>=0)S.overrides[idx]=o;else S.overrides.push(o);render();return}let m=prompt(`${r.a.name} → ${r.b.name} の段取り時間（分）`, "30");if(m===null)return;let o={from:r.a.name,to:r.b.name,mode:"time",minutes:+m||0};if(idx>=0)S.overrides[idx]=o;else S.overrides.push(o);render()}
+load();render();
+</script></main></body></html>
