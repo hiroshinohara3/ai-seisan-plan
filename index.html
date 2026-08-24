@@ -1,8 +1,8 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI生産計画 v27</title>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI生産計画 v28</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,sans-serif}header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:21px;font-weight:800}main{max-width:850px;margin:auto;padding:12px}.card{background:#fff;border-radius:16px;padding:16px;margin:10px 0}.item,.day{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}.row,.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}button{display:block;width:100%;border:0;border-radius:11px;padding:14px;margin:8px 0;background:#2563eb;color:#fff;font-size:16px;font-weight:700}.green{background:#16a34a}.red{background:#dc2626}.gray{background:#e5e7eb;color:#111827}.orange{background:#ea580c}input{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}label{display:block;font-size:13px;font-weight:700;margin:9px 0 4px}.hint{background:#f9fafb;border-radius:10px;padding:10px;font-size:12px;color:#4b5563}.small{font-size:12px;color:#6b7280}.total{font-weight:800;font-size:18px}.ok{background:#ecfdf5;color:#166534;padding:10px;border-radius:10px;font-size:13px}
 </style></head><body>
-<header><div class="title">AI生産計画 v27</div><div>日別能力・段取り・製品能力を考慮した生産計画版</div></header><main id="app"></main>
+<header><div class="title">AI生産計画 v28</div><div>日別能力・段取り・製品能力を考慮した生産計画版</div></header><main id="app"></main>
 <script>
 "use strict";
 var app=document.getElementById("app"),days=["月","火","水","木","金","土","日"];
@@ -239,14 +239,103 @@ function makePlan(adjustText){
  return {html:s};
 }
 function planResult(){
- var r=makePlan("");
- app.innerHTML=r.html;
- document.getElementById("b").onclick=planHome;
- document.getElementById("applyAdj").onclick=function(){var t=document.getElementById("adj").value||"";var x=makePlan(t);app.innerHTML=x.html;planResultBind(t)};
-}
-function planResultBind(t){
- document.getElementById("b").onclick=planHome;
- document.getElementById("applyAdj").onclick=function(){var x=makePlan(document.getElementById("adj").value||t||"");app.innerHTML=x.html;planResultBind(document.getElementById("adj").value||t||"")};
+ if(!lines.length){alert("先にラインを登録してください。");return}
+ var remain=planItems.map(function(p){return{name:p.name,remain:+p.qty}});
+ var rows=[],warnings=[],daySummary=[],over={};
+ for(var d=0;d<7;d++){
+  for(var li=0;li<lines.length;li++){
+   var line=lines[li],sc=getSc(li),available=hoursForDay(sc,d)*60,last="";
+   if(available<=0)continue;
+   var dayStartAvailable=available;
+
+   // First pass: satisfy remaining demand, respecting minimum production quantity.
+   for(var pi=0;pi<remain.length;pi++){
+    if(remain[pi].remain<=0)continue;
+    var p=findProduct(remain[pi].name);
+    if(!p){warnings.push(remain[pi].name+"：製品設定がありません");continue}
+    var cap=effectiveCapacity(line,p),lot=effectiveLot(line,p);
+    if(cap<=0){warnings.push(p.name+"："+line.name+"の能力が未設定");continue}
+    var tr=transition(line.name,last,p.name);
+    if(tr.impossible)continue;
+    var setup=last?Number(tr.time)||0:0;
+    if(setup>=available)continue;
+    var maxQty=(available-setup)*cap/60;
+    var make=Math.min(remain[pi].remain,maxQty);
+    if(make<=0)continue;
+    // If this is the final remainder and it is below minimum lot, make the minimum lot
+    // when the available capacity can accommodate it, and record the surplus.
+    if(lot>0 && make<lot && remain[pi].remain<=maxQty){
+      if(lot<=maxQty){
+        make=lot;
+        over[p.name]=(over[p.name]||0)+(lot-remain[pi].remain);
+      }else{
+        continue;
+      }
+    }
+    var runMin=make/cap*60,totalMin=setup+runMin;
+    if(totalMin>available+0.0001)continue;
+    rows.push({day:days[d],line:line.name,product:p.name,qty:Math.floor(make),setup:setup,run:runMin,total:totalMin,raw:p.raw,extra:Math.max(0,make-remain[pi].remain)});
+    remain[pi].remain=Math.max(0,remain[pi].remain-make);
+    available-=totalMin;
+    last=p.name;
+   }
+
+   // Second pass: use remaining capacity as much as practical.
+   // Prefer products already planned on this line/day to avoid an extra setup.
+   var candidates=planItems.map(function(q){return findProduct(q.name)}).filter(Boolean);
+   candidates.sort(function(a,b){
+     var al=last===a.name?0:1, bl=last===b.name?0:1;
+     return al-bl;
+   });
+   for(var ci=0;ci<candidates.length;ci++){
+    var cp=candidates[ci];
+    var ccap=effectiveCapacity(line,cp);
+    if(ccap<=0)continue;
+    var ctr=transition(line.name,last,cp.name);
+    if(ctr.impossible)continue;
+    var csetup=last?Number(ctr.time)||0:0;
+    if(csetup>=available)continue;
+    var extraQty=Math.floor((available-csetup)*ccap/60);
+    if(extraQty<=0)continue;
+    // Avoid adding a new setup solely for a tiny amount; if already same product, fill directly.
+    if(last!==cp.name && extraQty < Math.max(1,effectiveLot(line,cp)))continue;
+    rows.push({day:days[d],line:line.name,product:cp.name,qty:extraQty,setup:csetup,run:extraQty/ccap*60,total:csetup+extraQty/ccap*60,raw:cp.raw,extra:extraQty});
+    over[cp.name]=(over[cp.name]||0)+extraQty;
+    available-=csetup+extraQty/ccap*60;
+    last=cp.name;
+   }
+   daySummary.push({day:days[d],line:line.name,available:dayStartAvailable,used:dayStartAvailable-available,left:available});
+  }
+ }
+ var un=remain.filter(function(x){return x.remain>0});
+ var s='<div class="card"><h2>今週の生産案</h2><div class="hint">需要を満たした後も、段取り条件を守りながら各日の実働可能時間をできるだけ活用します。最低ロットは「最低生産数量」として扱い、必要なら最低ロットまで生産して余剰数量を明示します。</div>';
+
+ daySummary.forEach(function(x){
+   s+='<div class="item"><b>'+x.day+'曜日｜'+esc(x.line)+'</b><div class="small">実働可能 '+(x.available/60).toFixed(2)+'時間　計画使用 '+(x.used/60).toFixed(2)+'時間　残り '+(x.left/60).toFixed(2)+'時間</div></div>';
+ });
+ rows.forEach(function(r){
+   s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+r.qty+'個</div><div class="small">生産 '+(r.run/60).toFixed(2)+'時間　段取り '+r.setup+'分　合計 '+(r.total/60).toFixed(2)+'時間</div></div>';
+ });
+ var extras=Object.keys(over).filter(function(k){return over[k]>0});
+ if(extras.length){
+   s+='<div class="item"><b>📦 需要超過（余剰生産）</b>';
+   extras.forEach(function(k){s+='<div>'+esc(k)+'：'+Math.floor(over[k])+'個</div>'});
+   s+='<div class="small">稼働時間を最大限活用した結果、需要を超えて生産する数量です。最終調整コメントで変更できます。</div></div>';
+ }
+ if(warnings.length){
+   s+='<div class="item"><b>確認が必要</b>';
+   warnings.forEach(function(w){s+='<div class="small">・'+esc(w)+'</div>'});
+   s+='</div>';
+ }
+ if(un.length){
+   s+='<div class="item" style="border:2px solid #dc2626"><b>⚠ 未計画</b>';
+   un.forEach(function(x){s+='<div>'+esc(x.name)+'：'+Math.ceil(x.remain)+'個</div>'});
+   s+='<div class="small">今週の実働可能時間・能力・最低ロット・切替条件を考慮しても割り付けできない需要です。</div></div>';
+ }else{
+   s+='<div class="ok">需要を満たし、さらに利用可能な時間をできるだけ活用しました。</div>';
+ }
+ s+='<button class="gray" id="b">戻る</button></div>';
+ app.innerHTML=s;document.getElementById("b").onclick=planHome;
 }
 
 var originalHome=home;
