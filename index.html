@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AI生産計画 v19</title>
+<style>
+body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif}
+header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:21px;font-weight:800}.sub{font-size:12px}
+main{max-width:850px;margin:auto;padding:12px 12px 90px}.card{background:#fff;border-radius:16px;padding:16px;margin:10px 0;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+button{display:block;width:100%;border:0;border-radius:11px;padding:14px;margin:8px 0;background:#2563eb;color:#fff;font-size:16px;font-weight:700}
+.gray{background:#e5e7eb;color:#111827}.green{background:#16a34a}.red{background:#dc2626}.orange{background:#ea580c}
+input{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}
+label{display:block;font-size:13px;font-weight:700;margin:9px 0 4px}.hint{background:#f9fafb;border-radius:10px;padding:10px;font-size:12px;color:#4b5563}
+.item,.day{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}.actions,.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.actions button{margin:0;padding:10px;font-size:14px}
+.small{font-size:12px;color:#6b7280}.total{font-size:18px;font-weight:800}.ok{background:#ecfdf5;padding:10px;border-radius:10px;color:#166534;font-size:13px}
+</style>
+</head>
+<body>
+<header><div class="title">AI生産計画 v19</div><div class="sub">共通マスター＋標準稼働時間</div></header>
+<main id="app"></main>
+<script>
+"use strict";
+var app=document.getElementById("app"), days=["月","火","水","木","金","土","日"];
+
+function parse(k){try{var r=localStorage.getItem(k);return r?JSON.parse(r):null}catch(e){return null}}
+function arrFrom(keys){
+ for(var i=0;i<keys.length;i++){var v=parse(keys[i]);if(Array.isArray(v))return v}
+ return [];
+}
+function normalizeLine(x){
+ x=x||{};
+ return {name:String(x.name||x.lineName||""),capacity:Number(x.capacity!=null?x.capacity:(x.hourCapacity!=null?x.hourCapacity:0))||0,
+ lot:Number(x.lot!=null?x.lot:(x.minLot!=null?x.minLot:0))||0,
+ workers:Number(x.workers!=null?x.workers:(x.personnel!=null?x.personnel:0))||0,
+ standardStart:x.standardStart||"08:00",standardEnd:x.standardEnd||"17:00",standardBreak:Number(x.standardBreak!=null?x.standardBreak:60)||0};
+}
+var rawLines=arrFrom(["aiSeisan_lines","aiSeisanV18_lines","aiSeisanV17_lines","aiSeisanV16_lines","aiSeisanV15_lines","aiSeisanV14_lines"]);
+var lines=[];
+rawLines.forEach(function(x){var n=normalizeLine(x);if(n.name&&!lines.some(function(y){return y.name===n.name}))lines.push(n)});
+var schedules=arrFrom(["aiSeisan_schedules","aiSeisanV18_schedules","aiSeisanV17_schedules"]);
+
+function save(){
+ localStorage.setItem("aiSeisan_lines",JSON.stringify(lines));
+ localStorage.setItem("aiSeisan_schedules",JSON.stringify(schedules));
+ localStorage.setItem("aiSeisanV19_lines",JSON.stringify(lines));
+ localStorage.setItem("aiSeisanV19_schedules",JSON.stringify(schedules));
+}
+save();
+function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
+function mins(t){var p=String(t||"").split(":");return p.length===2?Number(p[0])*60+Number(p[1]):0}
+function calc(d){if(!d.enabled)return 0;var n=mins(d.end)-mins(d.start);if(n<0)n+=1440;return Math.max(0,n-(Number(d.breakMin)||0))}
+function defaultDays(line){
+ return days.map(function(d){return{day:d,enabled:["月","火","水","木","金"].indexOf(d)>=0,start:line.standardStart,end:line.standardEnd,breakMin:line.standardBreak}});
+}
+function getSchedule(i){
+ for(var j=0;j<schedules.length;j++)if(Number(schedules[j].lineId)===i)return schedules[j];
+ var x={lineId:i,days:defaultDays(lines[i])};schedules.push(x);save();return x;
+}
+function home(){
+ app.innerHTML='<div class="card"><h2>マスター管理</h2>'+
+ '<div class="ok">ライン：'+lines.length+'件</div>'+
+ '<button id="l">ラインを登録・修正</button>'+
+ '<button class="orange" id="w">曜日別稼働時間を設定</button></div>'+
+ '<div class="card"><h3>標準稼働時間</h3><div class="hint">ラインごとに標準の開始・終了・休憩を登録できます。曜日別設定では、この標準値を初期値として使用します。</div></div>';
+ document.getElementById("l").onclick=linesPage;document.getElementById("w").onclick=lineSelect;
+}
+function linesPage(){
+ var s='<div class="card"><h2>ライン登録・修正</h2><div class="hint">ラインの標準能力・最低ロット・必要人員・標準稼働時間をここで管理します。</div>';
+ lines.forEach(function(x,i){
+  s+='<div class="item"><b>'+esc(x.name)+'</b><div class="small">能力：'+x.capacity+'個/h　最低ロット：'+x.lot+'個　必要人員：'+x.workers+'人</div><div class="small">標準稼働：'+x.standardStart+'〜'+x.standardEnd+'　休憩 '+x.standardBreak+'分</div><div class="actions"><button data-e="'+i+'">編集</button><button class="red" data-d="'+i+'">削除</button></div></div>';
+ });
+ s+='<button class="green" id="n">＋新規登録</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;
+ document.getElementById("n").onclick=function(){editLine(-1)};document.getElementById("b").onclick=home;
+ document.querySelectorAll("[data-e]").forEach(function(b){b.onclick=function(){editLine(+this.dataset.e)}});
+ document.querySelectorAll("[data-d]").forEach(function(b){b.onclick=function(){var i=+this.dataset.d;if(confirm("このラインを削除しますか？")){lines.splice(i,1);schedules=schedules.filter(function(x){return Number(x.lineId)!==i});save();linesPage()}}});
+}
+function editLine(i){
+ var x=i>=0?lines[i]:{standardStart:"08:00",standardEnd:"17:00",standardBreak:60};
+ app.innerHTML='<div class="card"><h2>ライン'+(i<0?"新規登録":"編集")+'</h2>'+
+ '<label>ライン名<input id="n" value="'+esc(x.name)+'"></label>'+
+ '<label>標準1時間能力（個）<input id="c" type="number" min="0" value="'+(x.capacity||"")+'"></label>'+
+ '<label>標準最低ロット（個）<input id="l" type="number" min="0" value="'+(x.lot||"")+'"></label>'+
+ '<label>必要人員（人）<input id="w" type="number" min="0" value="'+(x.workers||"")+'"></label>'+
+ '<h3>標準稼働時間</h3>'+
+ '<div class="row"><div><label>標準開始</label><input id="st" type="time" value="'+x.standardStart+'"></div><div><label>標準終了</label><input id="ed" type="time" value="'+x.standardEnd+'"></div></div>'+
+ '<label>標準休憩時間（分）<input id="br" type="number" min="0" value="'+x.standardBreak+'"></label>'+
+ '<div class="hint">ここで設定した標準値は、曜日別稼働時間を新しく設定するときの初期値になります。曜日ごとに後から変更できます。</div>'+
+ '<button class="green" id="s">保存</button><button class="gray" id="b">キャンセル</button></div>';
+ document.getElementById("s").onclick=function(){
+  var n=document.getElementById("n").value.trim();if(!n){alert("ライン名を入力してください");return}
+  var o={name:n,capacity:+document.getElementById("c").value||0,lot:+document.getElementById("l").value||0,workers:+document.getElementById("w").value||0,
+  standardStart:document.getElementById("st").value||"08:00",standardEnd:document.getElementById("ed").value||"17:00",standardBreak:+document.getElementById("br").value||0};
+  if(i<0)lines.push(o);else lines[i]=o;save();linesPage();
+ };
+ document.getElementById("b").onclick=linesPage;
+}
+function lineSelect(){
+ if(!lines.length){alert("先にラインを登録してください。");return}
+ var s='<div class="card"><h2>曜日別稼働時間</h2><div class="hint">標準稼働時間を初期値として、曜日ごとに変更できます。</div>';
+ lines.forEach(function(x,i){s+='<button data-i="'+i+'">'+esc(x.name)+' を設定</button>'});
+ s+='<button class="gray" id="b">戻る</button></div>';app.innerHTML=s;
+ document.querySelectorAll("[data-i]").forEach(function(b){b.onclick=function(){scheduleEdit(+this.dataset.i)}});document.getElementById("b").onclick=home;
+}
+function scheduleEdit(i){
+ var sc=getSchedule(i),s='<div class="card"><h2>'+esc(lines[i].name)+' の稼働設定</h2>';
+ sc.days.forEach(function(d,j){s+='<div class="day"><b>'+d.day+'曜日</b><label><input type="checkbox" data-en="'+j+'" style="width:auto" '+(d.enabled?"checked":"")+'> 稼働する</label><div class="row"><div><label>開始</label><input type="time" data-st="'+j+'" value="'+d.start+'"></div><div><label>終了</label><input type="time" data-ed="'+j+'" value="'+d.end+'"></div></div><label>休憩時間（分）</label><input type="number" min="0" data-br="'+j+'" value="'+d.breakMin+'"><div class="small" data-t="'+j+'">実働：'+(calc(d)/60).toFixed(2)+'時間</div></div>'});
+ s+='<div class="total" id="sum">週間実働：'+(sc.days.reduce(function(a,d){return a+calc(d)},0)/60).toFixed(2)+'時間</div><button class="green" id="s">保存</button><button class="gray" id="b">キャンセル</button></div>';app.innerHTML=s;
+ function refresh(){var t=0;sc.days.forEach(function(d,j){d.enabled=document.querySelector('[data-en="'+j+'"]').checked;d.start=document.querySelector('[data-st="'+j+'"]').value;d.end=document.querySelector('[data-ed="'+j+'"]').value;d.breakMin=+document.querySelector('[data-br="'+j+'"]').value||0;document.querySelector('[data-t="'+j+'"]').textContent="実働："+(calc(d)/60).toFixed(2)+"時間";t+=calc(d)});document.getElementById("sum").textContent="週間実働："+(t/60).toFixed(2)+"時間"}
+ app.querySelectorAll("input").forEach(function(x){x.oninput=refresh;x.onchange=refresh});
+ document.getElementById("s").onclick=function(){refresh();save();lineSelect()};document.getElementById("b").onclick=lineSelect;
+}
+home();
+</script>
+</main></body></html>
