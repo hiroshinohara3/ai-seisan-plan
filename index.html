@@ -1,0 +1,96 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI生産計画 v21</title>
+<style>
+body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,sans-serif}header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:21px;font-weight:800}main{max-width:850px;margin:auto;padding:12px}.card{background:#fff;border-radius:16px;padding:16px;margin:10px 0}.item,.day{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}.row,.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}button{display:block;width:100%;border:0;border-radius:11px;padding:14px;margin:8px 0;background:#2563eb;color:#fff;font-size:16px;font-weight:700}.green{background:#16a34a}.red{background:#dc2626}.gray{background:#e5e7eb;color:#111827}.orange{background:#ea580c}input{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}label{display:block;font-size:13px;font-weight:700;margin:9px 0 4px}.hint{background:#f9fafb;border-radius:10px;padding:10px;font-size:12px;color:#4b5563}.small{font-size:12px;color:#6b7280}.total{font-weight:800;font-size:18px}.ok{background:#ecfdf5;color:#166534;padding:10px;border-radius:10px;font-size:13px}
+</style></head><body>
+<header><div class="title">AI生産計画 v21</div><div>今週の生産計画・曜日別提案</div></header><main id="app"></main>
+<script>
+"use strict";
+var app=document.getElementById("app"),days=["月","火","水","木","金","土","日"];
+function parse(k){try{var r=localStorage.getItem(k);return r?JSON.parse(r):null}catch(e){return null}}
+function arr(keys){for(var i=0;i<keys.length;i++){var v=parse(keys[i]);if(Array.isArray(v))return v}return[]}
+function norm(x){x=x||{};return{name:String(x.name||x.lineName||""),capacity:+(x.capacity!=null?x.capacity:x.hourCapacity)||0,lot:+(x.lot!=null?x.lot:x.minLot)||0,workers:+(x.workers!=null?x.workers:x.personnel)||0,standardStart:x.standardStart||"08:00",standardEnd:x.standardEnd||"17:00",standardBreak:+(x.standardBreak!=null?x.standardBreak:60)}}
+var raw=arr(["aiSeisan_lines","aiSeisanV19_lines","aiSeisanV18_lines","aiSeisanV17_lines","aiSeisanV16_lines","aiSeisanV15_lines"]);
+var lines=[];raw.forEach(function(x){var n=norm(x);if(n.name&&!lines.some(function(y){return y.name===n.name}))lines.push(n)});
+var schedules=arr(["aiSeisan_schedules","aiSeisanV19_schedules","aiSeisanV18_schedules","aiSeisanV17_schedules"]);
+function save(){localStorage.setItem("aiSeisan_lines",JSON.stringify(lines));localStorage.setItem("aiSeisan_schedules",JSON.stringify(schedules));localStorage.setItem("aiSeisanV20_lines",JSON.stringify(lines));localStorage.setItem("aiSeisanV20_schedules",JSON.stringify(schedules))}
+function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
+function mins(t){var p=(t||"").split(":");return p.length==2?+p[0]*60+ +p[1]:0}
+function calc(d){if(!d.enabled)return 0;var n=mins(d.end)-mins(d.start);if(n<0)n+=1440;return Math.max(0,n-(+d.breakMin||0))}
+function defaults(l){return days.map(function(d){return{day:d,enabled:["月","火","水","木","金"].indexOf(d)>=0,start:l.standardStart,end:l.standardEnd,breakMin:l.standardBreak}})}
+function getSc(i){for(var j=0;j<schedules.length;j++)if(+schedules[j].lineId===i)return schedules[j];var x={lineId:i,days:defaults(lines[i])};schedules.push(x);save();return x}
+save();
+function home(){app.innerHTML='<div class="card"><h2>マスター管理</h2><div class="ok">ライン：'+lines.length+'件</div><button id="l">ラインを登録・修正</button><button class="orange" id="w">曜日別稼働時間を設定</button></div><div class="card"><div class="hint">標準稼働時間を変更すると、曜日別稼働時間も標準値に更新されます。その後、曜日ごとに個別修正できます。</div></div>';document.getElementById("l").onclick=linesPage;document.getElementById("w").onclick=lineSelect}
+function linesPage(){var s='<div class="card"><h2>ライン登録・修正</h2><div class="hint">標準稼働時間を変更して保存すると、そのラインの曜日別設定を標準値へ更新します。</div>';lines.forEach(function(x,i){s+='<div class="item"><b>'+esc(x.name)+'</b><div class="small">能力 '+x.capacity+'個/h　最低ロット '+x.lot+'個　人員 '+x.workers+'人</div><div class="small">標準：'+x.standardStart+'〜'+x.standardEnd+'　休憩 '+x.standardBreak+'分</div><div class="actions"><button data-e="'+i+'">編集</button><button class="red" data-d="'+i+'">削除</button></div></div>'});s+='<button class="green" id="n">＋新規登録</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.getElementById("n").onclick=function(){editLine(-1)};document.getElementById("b").onclick=home;document.querySelectorAll("[data-e]").forEach(function(b){b.onclick=function(){editLine(+this.dataset.e)}});document.querySelectorAll("[data-d]").forEach(function(b){b.onclick=function(){var i=+this.dataset.d;if(confirm("削除しますか？")){lines.splice(i,1);schedules=schedules.filter(function(x){return +x.lineId!==i});save();linesPage()}}})}
+function editLine(i){var x=i>=0?lines[i]:{standardStart:"08:00",standardEnd:"17:00",standardBreak:60};app.innerHTML='<div class="card"><h2>ライン'+(i<0?"新規登録":"編集")+'</h2><label>ライン名<input id="n" value="'+esc(x.name)+'"></label><label>標準1時間能力（個）<input id="c" type="number" value="'+x.capacity+'"></label><label>標準最低ロット（個）<input id="l" type="number" value="'+x.lot+'"></label><label>必要人員（人）<input id="w" type="number" value="'+x.workers+'"></label><h3>標準稼働時間</h3><div class="row"><div><label>標準開始</label><input id="st" type="time" value="'+x.standardStart+'"></div><div><label>標準終了</label><input id="ed" type="time" value="'+x.standardEnd+'"></div></div><label>標準休憩（分）<input id="br" type="number" value="'+x.standardBreak+'"></label><div class="hint">保存すると、既存の曜日別設定もこの標準値に更新されます。</div><button class="green" id="s">保存</button><button class="gray" id="b">キャンセル</button></div>';document.getElementById("s").onclick=function(){var n=document.getElementById("n").value.trim();if(!n){alert("ライン名を入力してください");return}var o={name:n,capacity:+document.getElementById("c").value||0,lot:+document.getElementById("l").value||0,workers:+document.getElementById("w").value||0,standardStart:document.getElementById("st").value||"08:00",standardEnd:document.getElementById("ed").value||"17:00",standardBreak:+document.getElementById("br").value||0};if(i<0)lines.push(o);else{lines[i]=o;schedules.forEach(function(sc){if(+sc.lineId===i)sc.days=defaults(o)})}save();linesPage()};document.getElementById("b").onclick=linesPage}
+function lineSelect(){if(!lines.length){alert("先にラインを登録してください。");return}var s='<div class="card"><h2>曜日別稼働時間</h2>';lines.forEach(function(x,i){s+='<button data-i="'+i+'">'+esc(x.name)+' を設定</button>'});s+='<button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.querySelectorAll("[data-i]").forEach(function(b){b.onclick=function(){scheduleEdit(+this.dataset.i)}});document.getElementById("b").onclick=home}
+function scheduleEdit(i){var sc=getSc(i),s='<div class="card"><h2>'+esc(lines[i].name)+' の稼働設定</h2>';sc.days.forEach(function(d,j){s+='<div class="day"><b>'+d.day+'曜日</b><label><input type="checkbox" data-en="'+j+'" style="width:auto" '+(d.enabled?"checked":"")+'> 稼働する</label><div class="row"><div><label>開始</label><input type="time" data-st="'+j+'" value="'+d.start+'"></div><div><label>終了</label><input type="time" data-ed="'+j+'" value="'+d.end+'"></div></div><label>休憩（分）</label><input type="number" data-br="'+j+'" value="'+d.breakMin+'"><div class="small" data-t="'+j+'">実働：'+(calc(d)/60).toFixed(2)+'時間</div></div>'});s+='<div class="total" id="sum">週間実働：'+(sc.days.reduce(function(a,d){return a+calc(d)},0)/60).toFixed(2)+'時間</div><button class="green" id="s">保存</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;function refresh(){var t=0;sc.days.forEach(function(d,j){d.enabled=document.querySelector('[data-en="'+j+'"]').checked;d.start=document.querySelector('[data-st="'+j+'"]').value;d.end=document.querySelector('[data-ed="'+j+'"]').value;d.breakMin=+document.querySelector('[data-br="'+j+'"]').value||0;document.querySelector('[data-t="'+j+'"]').textContent="実働："+(calc(d)/60).toFixed(2)+"時間";t+=calc(d)});document.getElementById("sum").textContent="週間実働："+(t/60).toFixed(2)+"時間"}app.querySelectorAll("input").forEach(function(x){x.oninput=refresh;x.onchange=refresh});document.getElementById("s").onclick=function(){refresh();save();lineSelect()};document.getElementById("b").onclick=lineSelect}
+
+/* v21: 今週の生産計画 */
+var planItems=arr(["aiSeisan_planItems","aiSeisanV21_planItems"]);
+function savePlan(){localStorage.setItem("aiSeisan_planItems",JSON.stringify(planItems));localStorage.setItem("aiSeisanV21_planItems",JSON.stringify(planItems));save()}
+function planHome(){
+ var s='<div class="card"><h2>今週の生産計画</h2>'+
+ '<div class="hint">まず今週必要な商品と数量を入力すると、登録済みのライン・稼働時間を使って曜日別の生産案を作ります。</div>';
+ if(!planItems.length)s+='<div class="hint">まだ需要が登録されていません。</div>';
+ planItems.forEach(function(p,i){
+   s+='<div class="item"><b>'+esc(p.name)+'</b><div class="small">必要数量：'+p.qty+'個</div><div class="actions"><button data-pe="'+i+'">編集</button><button class="red" data-pd="'+i+'">削除</button></div></div>';
+ });
+ s+='<button class="green" id="pn">＋今週の需要を登録</button>';
+ if(planItems.length)s+='<button class="orange" id="calc">曜日別の生産案を作成</button>';
+ s+='<button class="gray" id="back">戻る</button></div>';
+ app.innerHTML=s;
+ document.getElementById("pn").onclick=function(){planEdit(-1)};
+ document.getElementById("back").onclick=home;
+ if(document.getElementById("calc"))document.getElementById("calc").onclick=planResult;
+ document.querySelectorAll("[data-pe]").forEach(function(b){b.onclick=function(){planEdit(+this.dataset.pe)}});
+ document.querySelectorAll("[data-pd]").forEach(function(b){b.onclick=function(){var i=+this.dataset.pd;if(confirm("削除しますか？")){planItems.splice(i,1);savePlan();planHome()}}});
+}
+function planEdit(i){
+ var p=i>=0?planItems[i]:{name:"",qty:0};
+ app.innerHTML='<div class="card"><h2>今週の需要'+(i<0?"登録":"編集")+'</h2>'+
+ '<label>商品名<input id="pn" value="'+esc(p.name)+'" placeholder="登録済みの商品名を入力"></label>'+
+ '<label>今週必要な数量（個）<input id="pq" type="number" min="1" value="'+(p.qty||"")+'"></label>'+
+ '<div class="hint">商品マスターとの連携は次段階で強化します。現在は商品名と必要数量から計画計算を行います。</div>'+
+ '<button class="green" id="ps">保存</button><button class="gray" id="pb">キャンセル</button></div>';
+ document.getElementById("ps").onclick=function(){
+   var n=document.getElementById("pn").value.trim(),q=+document.getElementById("pq").value||0;
+   if(!n||q<=0){alert("商品名と必要数量を入力してください");return}
+   var o={name:n,qty:q};if(i<0)planItems.push(o);else planItems[i]=o;savePlan();planHome();
+ };
+ document.getElementById("pb").onclick=planHome;
+}
+function hoursForDay(sc,dayIndex){return calc(sc.days[dayIndex])/60}
+function planResult(){
+ if(!lines.length){alert("先にラインを登録してください。");return}
+ var s='<div class="card"><h2>今週の生産案</h2><div class="hint">現時点では、ラインの標準1時間能力と曜日別実働時間を使って、単純に空き容量へ割り付けます。段取り時間・商品別能力は次段階で組み込みます。</div>';
+ var remain=planItems.map(function(p){return{name:p.name,remain:+p.qty}});
+ var rows=[];
+ for(var d=0;d<7;d++){
+   var dayTotal=0;
+   lines.forEach(function(line,li){
+     var sc=getSc(li),h=hoursForDay(sc,d),cap=+line.capacity||0,available=h*cap;
+     if(available<=0)return;
+     for(var pi=0;pi<remain.length;pi++){
+       if(remain[pi].remain<=0)continue;
+       var make=Math.min(remain[pi].remain,available);
+       if(make<=0)continue;
+       rows.push({day:days[d],line:line.name,product:remain[pi].name,qty:Math.floor(make),hours:make/cap});
+       remain[pi].remain-=make;available-=make;dayTotal+=make;
+       if(available<1)break;
+     }
+   });
+ }
+ var totalRemain=remain.reduce(function(a,p){return a+p.remain},0);
+ if(rows.length){
+   rows.forEach(function(r){s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+r.qty+'個</div><div class="small">約'+r.hours.toFixed(2)+'時間</div></div>'});
+ }else s+='<div class="hint">生産できる稼働枠がありません。</div>';
+ if(totalRemain>0)s+='<div class="item" style="border-color:#dc2626"><b>⚠ キャパ不足</b><div>未計画数量：'+Math.ceil(totalRemain)+'個</div><div class="small">曜日・ラインの稼働時間を増やすか、別ラインへの割り付けが必要です。</div></div>';
+ else s+='<div class="ok">必要数量を今週の稼働枠内に割り付けできました。</div>';
+ s+='<button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.getElementById("b").onclick=planHome;
+}
+
+var originalHome=home;
+function homeWithPlan(){originalHome();var c=document.createElement('button');c.className='orange';c.textContent='今週の生産計画';c.onclick=planHome;app.firstElementChild.appendChild(c)}
+home=homeWithPlan;
+home();
+</script></main></body></html>
