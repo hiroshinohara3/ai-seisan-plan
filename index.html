@@ -1,8 +1,8 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI生産計画 v26</title>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI生産計画 v27</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,sans-serif}header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:21px;font-weight:800}main{max-width:850px;margin:auto;padding:12px}.card{background:#fff;border-radius:16px;padding:16px;margin:10px 0}.item,.day{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}.row,.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}button{display:block;width:100%;border:0;border-radius:11px;padding:14px;margin:8px 0;background:#2563eb;color:#fff;font-size:16px;font-weight:700}.green{background:#16a34a}.red{background:#dc2626}.gray{background:#e5e7eb;color:#111827}.orange{background:#ea580c}input{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}label{display:block;font-size:13px;font-weight:700;margin:9px 0 4px}.hint{background:#f9fafb;border-radius:10px;padding:10px;font-size:12px;color:#4b5563}.small{font-size:12px;color:#6b7280}.total{font-weight:800;font-size:18px}.ok{background:#ecfdf5;color:#166534;padding:10px;border-radius:10px;font-size:13px}
 </style></head><body>
-<header><div class="title">AI生産計画 v26</div><div>日別能力・段取り・製品能力を考慮した生産計画版</div></header><main id="app"></main>
+<header><div class="title">AI生産計画 v27</div><div>日別能力・段取り・製品能力を考慮した生産計画版</div></header><main id="app"></main>
 <script>
 "use strict";
 var app=document.getElementById("app"),days=["月","火","水","木","金","土","日"];
@@ -139,13 +139,16 @@ function planEdit(i){
  document.getElementById("ps").onclick=function(){var n=document.getElementById("pn").value.trim(),q=+document.getElementById("pq").value||0;if(!n||q<=0){alert("製品を選択し、必要数量を入力してください");return}var o={name:n,qty:q};if(i<0)planItems.push(o);else planItems[i]=o;saveV22();planHome()};document.getElementById("pb").onclick=planHome;
 }
 function parseAdjustmentComment(txt){
- var blocked=[],preferred={};
+ var blocked=[],preferred={},surplusTarget="";
  var ds={"月":"月","火":"火","水":"水","木":"木","金":"金","土":"土","日":"日"};
  var m, re=/([月火水木金土日])曜日?[^。,\n]*?(?:生産しない|生産なし|休止|停止)/g;
  while((m=re.exec(txt))) if(blocked.indexOf(ds[m[1]])<0) blocked.push(ds[m[1]]);
  var re2=/([^\s、,。]+)\s*(?:を|は)\s*([月火水木金土日])曜日?(?:に|へ)(?:回す|移す|まとめる|寄せる)/g;
  while((m=re2.exec(txt))) preferred[m[1]]=ds[m[2]];
- return {blockedDays:blocked,preferred:preferred};
+ // 「余剰分はaを生産して」「余剰分をaに」など、最低ロットによる余剰を指定製品の追加生産へ振り替える。
+ var re3=/余剰分(?:は|を)?\s*([^\s、,。]+)\s*(?:を|で)?\s*(?:生産|作る|追加)/;
+ m=re3.exec(txt); if(m) surplusTarget=m[1];
+ return {blockedDays:blocked,preferred:preferred,surplusTarget:surplusTarget};
 }
 function makePlan(adjustText){
  var adj=parseAdjustmentComment(adjustText||"");
@@ -192,10 +195,35 @@ function makePlan(adjustText){
    daySummary.push({day:day,line:line.name,available:dayStartAvailable,used:dayStartAvailable-available,left:available});
   }
  });
+ var baseSurplus=rows.reduce(function(a,r){return a+r.surplus},0);
+ var adjustmentMessage="";
+ var extraSurplus=0;
+ if(adj.surplusTarget && baseSurplus>0){
+   var target=findProduct(adj.surplusTarget);
+   if(!target){
+     warnings.push(adj.surplusTarget+"：製品設定がありません（余剰分の追加生産先）");
+   }else{
+     var need=baseSurplus;
+     // 既存計画の各ライン・曜日の残り時間へ、余剰分を追加生産する。
+     for(var si=0;si<daySummary.length && need>0;si++){
+       var dsx=daySummary[si];
+       if(adj.blockedDays.indexOf(dsx.day)>=0)continue;
+       var line2=lines.filter(function(z){return z.name===dsx.line})[0]; if(!line2)continue;
+       var cap2=effectiveCapacity(line2,target); if(cap2<=0)continue;
+       var can=Math.floor(dsx.left*cap2/60); if(can<=0)continue;
+       var add=Math.min(need,can);
+       var run2=add/cap2*60;
+       rows.push({day:dsx.day,line:dsx.line,product:target.name,qty:add,setup:0,run:run2,total:run2,raw:target.raw,surplus:add,lot:effectiveLot(line2,target),extra:true});
+       dsx.used+=run2; dsx.left-=run2; need-=add; extraSurplus+=add;
+     }
+     if(extraSurplus>0) adjustmentMessage="最低ロットによる余剰"+baseSurplus+"個を「"+target.name+"」の追加生産へ反映しました。";
+     if(need>0) warnings.push("余剰分"+need+"個を「"+target.name+"」へ追加生産する空き時間が不足しています。");
+   }
+ }
  var un=remain.filter(function(x){return x.remain>0});
- var surplusTotal=rows.reduce(function(a,r){return a+r.surplus},0);
+ var surplusTotal=baseSurplus+extraSurplus;
  var s='<div class="card"><h2>今週の生産案</h2><div class="hint">曜日別の実働時間、ライン能力、段取り時間、最低ロットを考慮しています。最低ロットは倍数ではなく最低生産数量として扱います。</div>';
- if(adjustText)s+='<div class="hint"><b>反映した調整コメント</b><br>'+esc(adjustText)+'</div>';
+ if(adjustText)s+='<div class="hint"><b>反映した調整コメント</b><br>'+esc(adjustText)+(adjustmentMessage?'<br><b>'+esc(adjustmentMessage)+'</b>':'')+'</div>';
  daySummary.forEach(function(x){s+='<div class="item"><b>'+x.day+'曜日｜'+esc(x.line)+'</b><div class="small">実働可能 '+(x.available/60).toFixed(2)+'時間　計画使用 '+(x.used/60).toFixed(2)+'時間　残り '+(x.left/60).toFixed(2)+'時間</div></div>'});
  rows.forEach(function(r){
    s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+r.qty+'個</div><div class="small">生産 '+(r.run/60).toFixed(2)+'時間　段取り '+r.setup+'分　合計 '+(r.total/60).toFixed(2)+'時間';
@@ -206,7 +234,7 @@ function makePlan(adjustText){
  if(warnings.length){s+='<div class="item"><b>確認が必要</b>';warnings.forEach(function(w){s+='<div class="small">・'+esc(w)+'</div>'});s+='</div>'}
  if(un.length){s+='<div class="item" style="border:2px solid #dc2626"><b>⚠ 未計画</b>';un.forEach(function(x){s+='<div>'+esc(x.name)+'：'+Math.ceil(x.remain)+'個</div>'});s+='<div class="small">今週の実働可能時間・能力・最低ロット・切替条件を考慮しても割り付けできない数量です。</div></div>'}
  else if(!surplusTotal)s+='<div class="ok">必要数量を今週の計画に割り付けできました。</div>';
- s+='<div class="card"><h3>最終調整</h3><div class="hint">例：「火曜日は生産しない」「aを木曜日に回す」など、希望を書いてください。現在は曜日の生産停止と「製品名を○曜日へ回す」の調整に対応しています。</div><textarea id="adj" rows="4" placeholder="例：火曜日は生産しない\naを木曜日に回す"></textarea><button class="orange" id="applyAdj">コメントを反映して再計画</button></div>';
+ s+='<div class="card"><h3>最終調整</h3><div class="hint">例：「火曜日は生産しない」「aを木曜日に回す」など、希望を書いてください。「火曜日は生産しない」「aを木曜日に回す」に加え、「余剰分はaを生産して」のような指定にも対応します。変更後の計画と余剰・空き時間を再計算します。</div><textarea id="adj" rows="4" placeholder="例：火曜日は生産しない\naを木曜日に回す"></textarea><button class="orange" id="applyAdj">コメントを反映して再計画</button></div>';
  s+='<button class="gray" id="b">戻る</button></div>';
  return {html:s};
 }
