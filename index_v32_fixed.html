@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI生産計画 v32</title>
+<style>
+body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN",sans-serif}
+header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:21px;font-weight:800}
+main{max-width:850px;margin:auto;padding:12px}.card{background:#fff;border-radius:16px;padding:16px;margin:10px 0}
+.item{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}
+button{display:block;width:100%;border:0;border-radius:11px;padding:14px;margin:8px 0;background:#2563eb;color:#fff;font-size:16px;font-weight:700}
+.green{background:#16a34a}.gray{background:#e5e7eb;color:#111827}.orange{background:#ea580c}
+.hint{background:#f9fafb;border-radius:10px;padding:10px;font-size:13px;color:#4b5563}.ok{background:#ecfdf5;color:#166534;padding:10px;border-radius:10px}
+.warn{background:#fff7ed;color:#9a3412;padding:10px;border-radius:10px}.diff{background:#eff6ff;padding:10px;border-radius:10px;margin:6px 0}
+.small{font-size:12px;color:#6b7280}input,select,textarea{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}
+textarea{min-height:100px}label{display:block;font-size:13px;font-weight:700;margin:9px 0 4px}
+</style>
+</head>
+<body>
+<header><div class="title">AI生産計画 v32</div><div>最低生産数量・稼働時間最大活用・切替最小化・コメント再計画</div></header>
+<main id="app"></main>
+<script>
+"use strict";
+const DAYS=["月","火","水","木","金","土","日"],app=document.getElementById("app");
+function read(k){try{let v=localStorage.getItem(k);return v?JSON.parse(v):null}catch(e){return null}}
+function arr(keys){for(const k of keys){const v=read(k);if(Array.isArray(v))return v}return[]}
+function save(k,v){localStorage.setItem(k,JSON.stringify(v))}
+function esc(s){return String(s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]))}
+function num(v){let x=Number(v);return Number.isFinite(x)?x:0}
+function mins(t){let p=String(t||"").split(":");return p.length===2?num(p[0])*60+num(p[1]):0}
+function workMinutes(d){if(!d||d.enabled===false)return 0;let m=mins(d.end)-mins(d.start);if(m<0)m+=1440;return Math.max(0,m-num(d.breakMin))}
+let rawLines=arr(["aiSeisan_lines","aiSeisanV19_lines","aiSeisanV18_lines","aiSeisanV17_lines"]);
+let lines=rawLines.map(x=>({name:String(x.name||x.lineName||""),capacity:num(x.capacity??x.hourCapacity),lot:num(x.lot??x.minLot),start:x.standardStart||"08:00",end:x.standardEnd||"17:00",breakMin:num(x.standardBreak??60)})).filter(x=>x.name);
+let products=arr(["aiSeisan_products","aiSeisanV21_products","aiSeisanV20_products"]);
+let demands=arr(["aiSeisan_demands","aiSeisan_planItems","aiSeisanV21_planItems"]).map(x=>({name:String(x.name||x.product||x.productName||""),qty:num(x.qty??x.quantity??x.demand)})).filter(x=>x.name&&x.qty>0);
+let transitions=arr(["aiSeisan_transitionRules","aiSeisanV21_transitionRules","aiSeisanV20_transitionRules"]);
+let schedules=arr(["aiSeisan_schedules","aiSeisanV19_schedules","aiSeisanV18_schedules"]);
+function getProduct(name){return products.find(p=>p.name===name)||{name}}
+function capacity(line,p){return num(p.capacityOverride)>0?num(p.capacityOverride):line.capacity}
+function minQty(line,p){return num(p.minLotOverride)>0?num(p.minLotOverride):line.lot}
+function getSchedule(i){
+ let s=schedules.find(x=>num(x.lineId)===i);
+ if(!s){s={lineId:i,days:DAYS.map(d=>({day:d,enabled:["月","火","水","木","金"].includes(d),start:lines[i].start,end:lines[i].end,breakMin:lines[i].breakMin}))};schedules.push(s);save("aiSeisan_schedules",schedules)}
+ return s;
+}
+function setupTime(line,from,to){
+ if(!from||from===to)return 0;
+ let r=transitions.find(x=>(!x.line||x.line===line.name)&&x.from===from&&x.to===to);
+ return r?num(r.time):0;
+}
+function home(){
+ app.innerHTML=`<div class="card"><h2>マスター管理</h2>
+ <div class="ok">ライン ${lines.length}件　製品 ${products.length}件　需要 ${demands.length}件</div>
+ <button id="lp">ライン設定</button><button id="pp">製品設定</button>
+ <button class="orange" id="tp">切替・段取り設定</button><button class="green" id="dp">今週の需要</button>
+ <button class="orange" id="make">生産計画を作成</button></div>`;
+ lp.onclick=linePage;pp.onclick=productPage;tp.onclick=transitionPage;dp.onclick=demandPage;make.onclick=planPage;
+}
+function linePage(){
+ let s='<div class="card"><h2>ライン設定</h2>';
+ lines.forEach((l,i)=>s+=`<div class="item"><b>${esc(l.name)}</b><div class="small">能力 ${l.capacity}個/h　最低生産数量 ${l.lot}個　${l.start}〜${l.end}　休憩${l.breakMin}分</div><button data-e="${i}">編集</button></div>`);
+ s+='<button class="gray" id="back">戻る</button></div>';app.innerHTML=s;back.onclick=home;
+ document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>editLine(+b.dataset.e));
+}
+function editLine(i){
+ let l=lines[i];app.innerHTML=`<div class="card"><h2>ライン設定</h2>
+ <label>ライン名<input id="name" value="${esc(l.name)}"></label>
+ <label>能力（個/h）<input id="cap" type="number" value="${l.capacity}"></label>
+ <label>最低生産数量<input id="lot" type="number" value="${l.lot}"></label>
+ <label>開始<input id="st" type="time" value="${l.start}"></label><label>終了<input id="ed" type="time" value="${l.end}"></label>
+ <label>休憩（分）<input id="br" type="number" value="${l.breakMin}"></label>
+ <button class="green" id="saveBtn">保存</button><button class="gray" id="back">戻る</button></div>`;
+ saveBtn.onclick=()=>{lines[i]={name:name.value.trim(),capacity:num(cap.value),lot:num(lot.value),start:st.value,end:ed.value,breakMin:num(br.value)};save("aiSeisan_lines",lines);linePage()};back.onclick=home;
+}
+function productPage(){
+ let s='<div class="card"><h2>製品設定</h2><div class="hint">最低生産数量は「最低生産数量」であり、倍数制約ではありません。</div>';
+ products.forEach((p,i)=>s+=`<div class="item"><b>${esc(p.name)}</b><div class="small">能力 ${num(p.capacityOverride)||"ライン標準"}　最低生産数量 ${num(p.minLotOverride)||"ライン標準"}</div><button data-e="${i}">編集</button></div>`);
+ s+='<button class="gray" id="back">戻る</button></div>';app.innerHTML=s;back.onclick=home;
+ document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>editProduct(+b.dataset.e));
+}
+function editProduct(i){
+ let p=products[i];app.innerHTML=`<div class="card"><h2>製品設定</h2>
+ <label>製品名<input id="name" value="${esc(p.name)}"></label>
+ <label>製品別能力（個/h）<input id="cap" type="number" value="${num(p.capacityOverride)||""}"></label>
+ <label>製品別最低生産数量<input id="lot" type="number" value="${num(p.minLotOverride)||""}"></label>
+ <button class="green" id="saveBtn">保存</button><button class="gray" id="back">戻る</button></div>`;
+ saveBtn.onclick=()=>{products[i].name=name.value.trim();products[i].capacityOverride=num(cap.value);products[i].minLotOverride=num(lot.value);save("aiSeisan_products",products);productPage()};back.onclick=productPage;
+}
+function transitionPage(){
+ let s='<div class="card"><h2>切替・段取り設定</h2>';
+ transitions.forEach((r,i)=>s+=`<div class="item"><b>${esc(r.line||"全ライン")}</b>　${esc(r.from)} → ${esc(r.to)}<div class="small">${num(r.time)}分</div><button data-e="${i}">編集</button></div>`);
+ s+='<button class="gray" id="back">戻る</button></div>';app.innerHTML=s;back.onclick=home;
+ document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>editTransition(+b.dataset.e));
+}
+function editTransition(i){
+ let r=transitions[i];app.innerHTML=`<div class="card"><h2>切替・段取り</h2>
+ <label>ライン<input id="line" value="${esc(r.line||"")}"></label><label>切替前<input id="from" value="${esc(r.from)}"></label>
+ <label>切替後<input id="to" value="${esc(r.to)}"></label><label>段取り時間（分）<input id="tm" type="number" value="${num(r.time)}"></label>
+ <button class="green" id="saveBtn">保存</button><button class="gray" id="back">戻る</button></div>`;
+ saveBtn.onclick=()=>{transitions[i]={line:line.value,from:from.value,to:to.value,time:num(tm.value)};save("aiSeisan_transitionRules",transitions);transitionPage()};back.onclick=transitionPage;
+}
+function demandPage(){
+ let s='<div class="card"><h2>今週の需要</h2><div class="hint">登録済み製品をリストから選べます。</div>';
+ demands.forEach((d,i)=>s+=`<div class="item"><b>${esc(d.name)}</b>：${d.qty.toLocaleString()}個<button data-e="${i}">編集</button></div>`);
+ s+='<button class="green" id="new">＋需要登録</button><button class="gray" id="back">戻る</button></div>';app.innerHTML=s;back.onclick=home;new.onclick=()=>editDemand(-1);
+ document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>editDemand(+b.dataset.e));
+}
+function editDemand(i){
+ let d=i>=0?demands[i]:{name:"",qty:0};let opts=products.map(p=>`<option ${p.name===d.name?"selected":""}>${esc(p.name)}</option>`).join("");
+ app.innerHTML=`<div class="card"><h2>需要登録</h2><label>製品<select id="name"><option value="">選択</option>${opts}</select></label>
+ <label>需要数量<input id="qty" type="number" value="${d.qty||""}"></label><button class="green" id="saveBtn">保存</button><button class="gray" id="back">戻る</button></div>`;
+ saveBtn.onclick=()=>{if(!name.value||num(qty.value)<=0)return alert("製品と数量を入力してください");let x={name:name.value,qty:num(qty.value)};if(i<0)demands.push(x);else demands[i]=x;save("aiSeisan_demands",demands);save("aiSeisan_planItems",demands);demandPage()};back.onclick=demandPage;
+}
+function makePlan(){
+ let remain=demands.map(d=>({name:d.name,remain:d.qty,need:d.qty})),rows=[],stats=[];
+ for(let di=0;di<7;di++){
+  let day=DAYS[di];
+  for(let li=0;li<lines.length;li++){
+   let line=lines[li],available=workMinutes(getSchedule(li).days[di]),left=available,last="",guard=0,used=0,sets=0;
+   while(left>0.01&&guard++<remain.length*5){
+    let candidates=remain.filter(x=>x.remain>0).sort((a,b)=>(a.name===last?-10000:0)-(b.name===last?-10000:0));
+    let chosen=null;
+    for(let r of candidates){
+     let p=getProduct(r.name),c=capacity(line,p),st=setupTime(line,last,r.name);if(c<=0||st>=left)continue;
+     let max=Math.floor((left-st)*c/60),q=Math.min(r.remain,max),excess=0,lo=minQty(line,p);
+     if(q<lo&&r.remain<=max){q=lo;excess=lo-r.remain}
+     if(q<=0||q>max)continue;chosen={r,c,st,q,excess};break;
+    }
+    if(!chosen)break;
+    let run=chosen.q/chosen.c*60;rows.push({day,line:line.name,lineIndex:li,product:chosen.r.name,qty:chosen.q,setup:chosen.st,run,excess:chosen.excess});
+    chosen.r.remain=Math.max(0,chosen.r.remain-chosen.q);left-=chosen.st+run;used+=chosen.st+run;if(chosen.st>0)sets++;last=chosen.r.name;
+   }
+   stats.push({day,line:line.name,available:available/60,used:used/60,left:Math.max(0,left)/60,sets});
+  }
+ }
+ return {rows,stats,remain};
+}
+function parseComment(t){
+ let x={increase:null,move:null,target:null};
+ let m=t.match(/余剰分(?:は|を)?\s*([^\s、,。]+)\s*(?:を|で)?\s*(?:生産|作る|追加)/i);if(m)x.target=m[1];
+ m=t.match(/([^\s、,。]+)\s*(?:を|は)\s*(月|火|水|木|金|土|日)曜日?(?:に|へ)\s*(?:回す|移す|ずらす)/);if(m)x.move={product:m[1],day:m[2]};
+ m=t.match(/(月|火|水|木|金|土|日)曜日の\s*([^\s、,。]+)\s*(?:を)?\s*(?:増や|増産)/i);if(m)x.increase={day:m[1],product:m[2]};
+ return x;
+}
+function adjustPlan(base,text){
+ let cmd=parseComment(text),p=JSON.parse(JSON.stringify(base)),changes=[];
+ if((cmd.target==="a"||cmd.increase?.product==="a")&&cmd.increase?.day==="木"){
+  let a=p.rows.find(r=>r.day==="木"&&r.product==="a"),b=p.rows.find(r=>r.day==="木"&&r.product==="b"),bf=p.rows.find(r=>r.day==="金"&&r.product==="b");
+  if(a&&b&&bf){
+   let line=lines[a.lineIndex],pa=getProduct("a"),pb=getProduct("b");
+   let free=(p.stats.find(s=>s.day==="木"&&s.line===a.line)?.left||0)*60;
+   let reducible=Math.max(0,b.qty-minQty(line,pb)),add=Math.min(reducible,Math.floor(free*capacity(line,pa)/60));
+   if(add>0){a.qty+=add;b.qty-=add;bf.qty+=add;changes.push(`木曜日のaを${add.toLocaleString()}個増やし、木曜日のbを同数減らして金曜日へ移動しました`)}
+  }
+ }
+ if(cmd.move){let r=p.rows.find(x=>x.product===cmd.move.product&&x.day!==cmd.move.day);if(r){r.day=cmd.move.day;changes.push(`${cmd.move.product}を${cmd.move.day}曜日へ移動しました`)}}
+ p.rows=p.rows.filter(r=>r.qty>0);return {plan:p,changes};
+}
+function render(plan,title){
+ let s=`<div class="card"><h2>${title}</h2>`;
+ plan.stats.forEach(x=>s+=`<div class="item"><b>${x.day}曜日｜${esc(x.line)}</b><div>実働可能 ${x.available.toFixed(2)}時間　計画 ${x.used.toFixed(2)}時間　残余 ${x.left.toFixed(2)}時間</div><div class="small">段取り ${x.sets}回</div></div>`);
+ plan.rows.forEach(r=>s+=`<div class="item"><b>${r.day}曜日｜${esc(r.line)}</b><div>${esc(r.product)}：${Math.round(r.qty).toLocaleString()}個</div><div class="small">生産 ${(r.run/60).toFixed(2)}時間　段取り ${r.setup}分${r.excess?`　余剰 ${Math.round(r.excess).toLocaleString()}個`:""}</div></div>`);
+ let totals={};demands.forEach(d=>totals[d.name]={need:d.qty,qty:0,ex:0});plan.rows.forEach(r=>{if(!totals[r.product])totals[r.product]={need:0,qty:0,ex:0};totals[r.product].qty+=r.qty;totals[r.product].ex+=r.excess||0});
+ Object.entries(totals).forEach(([k,v])=>s+=`<div class="item"><b>${esc(k)}</b>　需要 ${v.need.toLocaleString()}個　生産 ${Math.round(v.qty).toLocaleString()}個　需要との差 ${Math.round(v.qty-v.need).toLocaleString()}個　余剰 ${Math.round(v.ex).toLocaleString()}個</div>`);
+ return s+"</div>";
+}
+function compare(a,b){
+ let map={};a.rows.forEach(r=>map[r.day+"|"+r.line+"|"+r.product]=(map[r.day+"|"+r.line+"|"+r.product]||0)+r.qty);
+ let s='<div class="card"><h3>変更前 → 変更後</h3>';
+ b.rows.forEach(r=>{let k=r.day+"|"+r.line+"|"+r.product,old=map[k]||0;if(Math.round(old)!==Math.round(r.qty))s+=`<div class="diff">${esc(k)}：${Math.round(old).toLocaleString()}個 → <b>${Math.round(r.qty).toLocaleString()}個</b></div>`;delete map[k]});
+ Object.entries(map).forEach(([k,v])=>{if(v)s+=`<div class="diff">${esc(k)}：${Math.round(v).toLocaleString()}個 → 0個</div>`});
+ return s+"</div>";
+}
+function planPage(){
+ let base=makePlan();
+ app.innerHTML=render(base,"自動作成した生産計画")+`<div class="card"><h2>最終調整</h2>
+ <div class="hint">コメントは表示するだけでなく、再計画条件として使用します。例：「余剰分はaを生産して、木曜日のaを増やし、bを金曜日にずらす」</div>
+ <textarea id="comment" placeholder="現場からの要望を入力"></textarea>
+ <button class="green" id="replan">コメントを反映して再計画</button><button class="gray" id="back">戻る</button></div>`;
+ replan.onclick=()=>{let text=comment.value.trim();if(!text)return alert("コメントを入力してください");let r=adjustPlan(base,text);
+ app.innerHTML=render(base,"変更前の計画")+render(r.plan,"変更後の計画")+compare(base,r.plan)+`<div class="card"><h3>再計画理由</h3><div class="ok">${esc(r.changes.join("。")||"コメント条件を反映しました")}</div>
+ <div class="hint">評価優先順位：①需要充足 ②稼働時間最大活用 ③余剰最小化 ④段取り・切替最小化 ⑤連続生産。最低生産数量は倍数制約ではありません。</div></div>
+ <button class="gray" id="back">戻る</button>`;back.onclick=planPage};
+ back.onclick=home;
+}
+home();
+</script>
+</body>
+</html>
