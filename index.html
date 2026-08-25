@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.1（v30操作性維持・再計画エンジン再設計版）</title>
+<title>AI生産計画 v35.3（生産順序・余力最適化版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:16px}.title{font-size:20px;font-weight:800}
@@ -19,7 +19,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 </style>
 </head>
 <body>
-<header><div class="title">AI生産計画 v35.1（v30操作性維持・再計画エンジン再設計版）</div>
+<header><div class="title">AI生産計画 v35.3（生産順序・余力最適化版）</div>
 <div>v30を基準に、自然な現場コメントを「意図」として解釈して再計画</div></header>
 <main id="app"></main>
 <script>
@@ -36,7 +36,7 @@ function defaults(){return DAYS.map(d=>({day:d,enabled:["月","火","水","木",
 
 let lines=load("aiSeisan_lines",[]);
 let products=load("aiSeisan_products",[]);
-let transitions=load("aiSeisan_transitionRules",[]);
+let transitions=load("aiSeisan_transitionRules",[]).map(x=>({...x,allowed:x.allowed!==false}));
 let demands=load("aiSeisan_planItems",[]);
 let schedules=load("aiSeisan_schedules",[]);
 
@@ -58,6 +58,7 @@ function lot(line,p){return n(p.minLotOverride)||n(line.lot)||0}
 function setup(line,from,to){
  if(!from||from===to)return 0;
  const r=transitions.find(x=>(!x.line||x.line===line)&&x.from===from&&x.to===to);
+ if(r && r.allowed===false)return Infinity;
  return r?n(r.time):0;
 }
 function saveAll(){save("aiSeisan_lines",lines);save("aiSeisan_products",products);save("aiSeisan_transitionRules",transitions);save("aiSeisan_planItems",demands);save("aiSeisan_schedules",schedules)}
@@ -118,13 +119,50 @@ function productEdit(i){
  document.getElementById("back").onclick=productsPage;
 }
 function transPage(){
- let s=`<div class="card"><h2>段取り設定</h2><div class="hint">同一製品は段取り0。未登録の切替は0分として扱います。登録した切替だけ時間を加算します。</div>`;
- transitions.forEach((r,i)=>s+=`<div class="item">${esc(r.line||"全ライン")}：${esc(r.from)} → ${esc(r.to)} / ${r.time}分 <button data-d="${i}" class="red">削除</button></div>`);
- s+=`<div class="row"><input id="line" placeholder="ライン（任意）"><input id="from" placeholder="変更前製品"></div>
- <div class="row"><input id="to" placeholder="変更後製品"><input id="time" type="number" placeholder="段取り分"></div>
- <button class="green" id="add">追加</button><button class="gray" id="back">戻る</button></div>`;app.innerHTML=s;
- document.getElementById("add").onclick=()=>{transitions.push({line:document.getElementById("line").value.trim(),from:document.getElementById("from").value.trim(),to:document.getElementById("to").value.trim(),time:n(document.getElementById("time").value)});saveAll();transPage()};
- document.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{transitions.splice(n(b.dataset.d),1);saveAll();transPage()});document.getElementById("back").onclick=home;
+ let s=`<div class="card"><h2>段取り設定</h2>
+ <div class="hint">「切替不可能」にした組み合わせは、生産順序として選択されません。段取り時間と切替可否は別々に設定できます。</div>`;
+ transitions.forEach((r,i)=>s+=`<div class="item">
+   <b>${esc(r.line||"全ライン")}</b>：${esc(r.from)} → ${esc(r.to)}
+   <div class="small">${r.allowed===false?"切替不可能":"切替可能"} / ${r.allowed===false?"－":n(r.time)+"分"}</div>
+   <button data-e="${i}">編集</button>
+   <button data-d="${i}" class="red">削除</button>
+ </div>`);
+ s+=`<div class="item"><h3>新しい段取り条件</h3>
+ <div class="row"><input id="line" placeholder="ライン（任意）"><input id="from" placeholder="切替前製品"></div>
+ <div class="row"><input id="to" placeholder="切替後製品"><input id="time" type="number" min="0" placeholder="段取り時間（分）"></div>
+ <label>切替可否<select id="allowed"><option value="yes">切替可能</option><option value="no">切替不可能</option></select></label>
+ <button class="green" id="add">追加</button></div>
+ <button class="gray" id="back">戻る</button></div>`;
+ app.innerHTML=s;
+ document.getElementById("add").onclick=()=>{
+   const from=document.getElementById("from").value.trim(),to=document.getElementById("to").value.trim();
+   if(!from||!to)return alert("切替前・切替後の製品を入力してください");
+   const allowed=document.getElementById("allowed").value==="yes";
+   transitions.push({line:document.getElementById("line").value.trim(),from,to,time:allowed?n(document.getElementById("time").value):0,allowed});
+   saveAll();transPage();
+ };
+ document.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{
+   transitions.splice(n(b.dataset.d),1);saveAll();transPage();
+ });
+ document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>transitionEdit(n(b.dataset.e)));
+ document.getElementById("back").onclick=home;
+} 
+
+function transitionEdit(i){
+ const r={...transitions[i],allowed:transitions[i].allowed!==false};
+ app.innerHTML=`<div class="card"><h2>段取り条件を編集</h2>
+ <label>ライン（任意）<input id="line" value="${esc(r.line||"")}"></label>
+ <div class="row"><label>切替前<input id="from" value="${esc(r.from||"")}"></label>
+ <label>切替後<input id="to" value="${esc(r.to||"")}"></label></div>
+ <label>切替可否<select id="allowed"><option value="yes" ${r.allowed?"selected":""}>切替可能</option><option value="no" ${!r.allowed?"selected":""}>切替不可能</option></select></label>
+ <label>段取り時間（分）<input id="time" type="number" min="0" value="${n(r.time)}"></label>
+ <button class="green" id="save">保存</button><button class="gray" id="back">戻る</button></div>`;
+ document.getElementById("save").onclick=()=>{
+   const allowed=document.getElementById("allowed").value==="yes";
+   transitions[i]={line:document.getElementById("line").value.trim(),from:document.getElementById("from").value.trim(),to:document.getElementById("to").value.trim(),time:allowed?n(document.getElementById("time").value):0,allowed};
+   saveAll();transPage();
+ };
+ document.getElementById("back").onclick=transPage;
 }
 function demandPage(){
  let s=`<div class="card"><h2>需要入力</h2>
@@ -171,49 +209,103 @@ function demandPage(){
  document.getElementById("back").onclick=home;
 }
 function basePlan(){
- const rows=[],unallocated=[];
- const remaining=demands.map(d=>({name:String(d.name||d.product||""),need:n(d.demand??d.qty),remain:n(d.demand??d.qty)})).filter(x=>x.name&&x.remain>0);
+ const remaining=demands.map(d=>({
+   name:String(d.name||d.product||""),
+   need:n(d.demand??d.qty),
+   remain:n(d.demand??d.qty)
+ })).filter(x=>x.name&&x.remain>0);
+ const rows=[];
+ const used={};
+ DAYS.forEach(d=>used[d]={});
+ const forbidden=(line,from,to)=>setup(line,from,to)===Infinity;
+
+ // Build a feasible plan day-by-day, but choose the next product by a score:
+ // same product continuity > low setup > high utilization > larger remaining demand.
  for(const li of lines){
-   const sc=lineSchedule(lines.indexOf(li));
+   const liIndex=lines.indexOf(li), sc=lineSchedule(liIndex);
    for(let di=0;di<DAYS.length;di++){
-     const day=sc.days[di]; let free=workMin(day);
+     const day=sc.days[di];
+     let free=workMin(day);
      if(free<=0)continue;
      let last="";
-     // prioritize products with remaining demand and, secondarily, products already run that day
-     while(free>0.01){
-       const candidates=remaining.filter(x=>x.remain>0);
+     let guard=0;
+     while(free>0.01 && guard++<1000){
+       const candidates=remaining.filter(x=>x.remain>0.001);
        if(!candidates.length)break;
-       candidates.sort((a,b)=>{
-         const ac=(a.name===last?1:0),bc=(b.name===last?1:0);
-         return bc-ac || b.remain-a.remain;
-       });
-       const q=candidates[0],p=product(q.name),c=cap(li,p);
-       if(c<=0)break;
-       const st=setup(li.name,last,q.name);
-       if(st>=free){break}
-       free-=st;
-       const possible=Math.min(q.remain,free*c/60);
-       if(possible<=0)break;
-       // Do not force multiples. Only lift a split below minimum quantity.
-       let qty=possible;
-       const minimum=lot(li,p);
-       if(qty<q.remain && qty<minimum){
-         // If this is the final portion, minimum quantity is used and surplus is explicitly tracked.
-         qty=Math.min(q.remain,minimum);
+
+       let best=null;
+       for(const q of candidates){
+         const p=product(q.name), c=cap(li,p);
+         if(c<=0)continue;
+         const st=setup(li.name,last,q.name);
+         if(st===Infinity || st>=free)continue;
+         const same=last===q.name?100000:0;
+         const continuity=(last===q.name?50000:0);
+         const setupPenalty=st*250;
+         const demandScore=Math.min(q.remain, c*free/60);
+         const min=lot(li,p);
+         // Prefer a meaningful run rather than tiny fragments.
+         const run=Math.min(q.remain,Math.max(min,c*Math.max(0,free-st)/60));
+         const score=same+continuity+demandScore*10+run-setupPenalty;
+         if(!best||score>best.score)best={q,p,c,st,score};
        }
-       qty=Math.min(qty,q.remain,free*c/60);
+       if(!best)break;
+
+       const {q,p,c,st}=best;
+       free-=st;
+       let qty=Math.min(q.remain,free*c/60);
        if(qty<=0)break;
-       const total=qty/c*60;
-       rows.push({day:DAYS[di],line:li.name,product:q.name,qty,minutes:total,setup:st});
-       q.remain-=qty;free-=total;last=q.name;
-       if(q.remain<0.001)q.remain=0;
+
+       const min=lot(li,p);
+       // Minimum lot is a floor only when the planned production would otherwise
+       // be below it. Never round all production to multiples.
+       let surplus=0;
+       if(qty<q.remain && qty<min){
+         const possible=min;
+         const needMinMinutes=possible/c*60;
+         if(needMinMinutes<=free+0.0001){
+           qty=possible;
+           surplus=Math.max(0,qty-Math.min(q.remain,qty));
+         }
+       }
+
+       const minutes=qty/c*60;
+       const existing=rows.find(r=>r.day===DAYS[di]&&r.line===li.name&&r.product===q.name);
+       if(existing){
+         existing.qty+=qty;
+         existing.minutes+=minutes;
+         existing.setup+=st;
+       }else{
+         rows.push({day:DAYS[di],line:li.name,product:q.name,qty,minutes,setup:st,surplus});
+       }
+       q.remain=Math.max(0,q.remain-qty);
+       free=Math.max(0,free-minutes);
+       last=q.name;
      }
    }
  }
- remaining.forEach(x=>{if(x.remain>0.001)unallocated.push(x)});
- // Add explicit surplus field for minimum-quantity lifts.
- for(const r of rows)r.surplus=0;
- return {rows,unallocated};
+
+ return {
+   rows,
+   unallocated:remaining.filter(x=>x.remain>0.001),
+   objective:planObjective(rows)
+ };
+}
+
+function planObjective(rows){
+ let setupMin=0,setupCount=0,totalRun=0;
+ const dayUse={}; DAYS.forEach(d=>dayUse[d]=0);
+ rows.forEach(r=>{
+   setupMin+=n(r.setup);
+   if(n(r.setup)>0)setupCount++;
+   totalRun+=n(r.minutes);
+   dayUse[r.day]+=n(r.minutes)+n(r.setup);
+ });
+ const activeDays=Object.values(dayUse).filter(x=>x>0.01).length;
+ return {
+   setupMin,setupCount,totalRun,activeDays,
+   score: totalRun*10 - setupMin*80 - setupCount*120 - activeDays*2
+ };
 }
 function metrics(rows){
  const byDay={};DAYS.forEach(d=>byDay[d]={min:0,setup:0});
@@ -227,6 +319,9 @@ function renderRows(rows,title){
  s+=`</table></div>`;return s;
 }
 function summary(rows,un,title){
+ const forbidden=transitions.filter(x=>x.allowed===false);
+ const obj=planObjective(rows);
+
  const m=metrics(rows);let s=`<div class="card"><h3>${esc(title||"計画評価")}</h3>`;
  for(const d of DAYS){const x=m.byDay[d];if(x.min||x.setup)s+=`<div class="item"><b>${d}曜日</b>：実働 ${(x.min/60).toFixed(2)}h / 段取り ${x.setup.toFixed(0)}分</div>`}
  if(un.length)s+=`<div class="warn"><b>未充足</b><br>${un.map(x=>esc(x.name)+"："+Math.ceil(x.remain).toLocaleString()+"個").join("<br>")}</div>`;
@@ -265,50 +360,101 @@ function intent(text){
 function applyIntent(base,ins){
  let rows=JSON.parse(JSON.stringify(base.rows));
  const changes=[];
- // Explicit moves/directives are interpreted first.
+
  function row(day,p){return rows.find(r=>r.day===day&&r.product===p)}
- function dayMinutes(day){return rows.filter(r=>r.day===day).reduce((a,r)=>a+n(r.minutes),0)}
- function available(day,lineName){
-   const li=lines.find(x=>x.name===lineName);if(!li)return 0;
-   const sc=lineSchedule(lines.indexOf(li));const d=sc.days[DAYS.indexOf(day)];
-   return Math.max(0,workMin(d)-dayMinutes(day));
+ function dayMinutes(day){return rows.filter(r=>r.day===day).reduce((a,r)=>a+n(r.minutes)+n(r.setup),0)}
+ function capacityMinutes(day){let total=0;for(const li of lines){const sc=lineSchedule(lines.indexOf(li));const d=sc.days[DAYS.indexOf(day)];total+=workMin(d)}return total}
+ function addTo(day,lineName,pname,qty){
+   const li=lines.find(x=>x.name===lineName),p=product(pname),c=cap(li,p);
+   if(!li||!c||qty<=0)return false;
+   const st=setup(lineName,"",pname);
+   if(st===Infinity)return false;
+   const free=Math.max(0,capacityMinutes(day)-dayMinutes(day));
+   if(qty/c*60+st>free+0.0001)return false;
+   let r=row(day,pname);
+   if(r){r.qty+=qty;r.minutes+=qty/c*60;r.setup+=st}
+   else rows.push({day,line:lineName,product:pname,qty,minutes:qty/c*60,setup:st,surplus:0});
+   return true;
  }
+
+ // Explicit day-to-day moves.
  for(const mv of ins.moves){
-   const src=row(mv.fromDay,mv.product);if(!src)continue;
-   const li=lines.find(x=>x.name===src.line);const p=product(mv.product);const c=cap(li,p);
-   if(!c)continue;
-   const free=available(mv.toDay,li.name),st=setup(li.name,"",mv.product);
+   const src=row(mv.fromDay,mv.product); if(!src)continue;
+   const li=lines.find(x=>x.name===src.line), p=product(mv.product), c=cap(li,p);
+   if(!li||!c)continue;
+   const free=Math.max(0,capacityMinutes(mv.toDay)-dayMinutes(mv.toDay));
+   const st=setup(li.name,"",mv.product);
+   if(st===Infinity)continue;
    const q=Math.min(src.qty,Math.max(0,(free-st)*c/60));
-   if(q>0){src.qty-=q;let dst=row(mv.toDay,mv.product);if(dst){dst.qty+=q;dst.minutes+=q/c*60}else rows.push({day:mv.toDay,line:li.name,product:mv.product,qty:q,minutes:q/c*60,setup:st});changes.push(`${mv.product}を${mv.fromDay}曜日から${mv.toDay}曜日へ${Math.round(q).toLocaleString()}個移動`)}
+   if(q>0){
+     src.qty-=q; src.minutes-=q/c*60;
+     addTo(mv.toDay,li.name,mv.product,q);
+     changes.push(`${mv.product}を${mv.fromDay}曜日から${mv.toDay}曜日へ${Math.round(q).toLocaleString()}個移動`);
+   }
  }
+
+ // Explicit increases/decreases: a decrease creates movable quantity which
+ // is then offered to the best feasible day, rather than disappearing.
+ const movedPool=[];
  for(const d of ins.direct.filter(x=>x.dir==="decrease")){
    const r=row(d.day,d.product);if(!r)continue;
-   const p=product(d.product),li=lines.find(x=>x.name===r.line),minimum=lot(li,p);
-   const reducible=Math.max(0,r.qty-(r.qty>minimum?minimum:0));
+   const li=lines.find(x=>x.name===r.line),p=product(d.product);
+   const minimum=lot(li,p);
+   const reducible=Math.max(0,r.qty-Math.max(0,minimum));
    const q=d.qty?Math.min(d.qty,reducible):reducible;
-   if(q>0){r.qty-=q;r.minutes-=q/cap(li,p)*60;changes.push(`${d.day}曜日の${d.product}を${Math.round(q).toLocaleString()}個減らしました`)}
+   if(q>0){
+     r.qty-=q;r.minutes-=q/cap(li,p)*60;
+     movedPool.push({product:d.product,qty:q,line:li.name,from:d.day});
+     changes.push(`${d.day}曜日の${d.product}を${Math.round(q).toLocaleString()}個減らし、再配置候補にしました`);
+   }
  }
- // For natural-language goals, rebuild a candidate plan with a scoring bias rather than hard-coded phrases.
+ for(const pool of movedPool){
+   const li=lines.find(x=>x.name===pool.line),p=product(pool.product),c=cap(li,p);
+   let best=null;
+   for(const day of DAYS){
+     if(day===pool.from)continue;
+     const free=Math.max(0,capacityMinutes(day)-dayMinutes(day));
+     const st=setup(li.name,"",pool.product);
+     if(st===Infinity)continue;
+     const q=Math.min(pool.qty,Math.max(0,(free-st)*c/60));
+     if(q<=0)continue;
+     const desired=ins.goals.some(g=>g.g==="木曜日の稼働を増やす")&&day==="木"?100000:0;
+     const reduceFri=ins.goals.some(g=>g.g==="金曜日の生産を減らす")&&day==="金"?-50000:0;
+     const earlier=ins.goals.some(g=>g.g==="可能な範囲で前倒し")?(DAYS.indexOf(day)<DAYS.indexOf(pool.from)?20000:0):0;
+     const score=desired+reduceFri+earlier+q*10-st*500;
+     if(!best||score>best.score)best={day,q,score};
+   }
+   if(best&&addTo(best.day,li.name,pool.product,best.q)){
+     changes.push(`${pool.product}を${best.day}曜日へ${Math.round(best.q).toLocaleString()}個再配置`);
+   }
+ }
+
+ // Natural-language goals: generate a fresh plan and compare objective plus
+ // intent bias. This is intentionally generic; it does not depend on one
+ // exact sentence.
  if(ins.goals.length){
    const fresh=basePlan();
-   const scoreDay=(r)=>{
+   const bias=(r)=>{
      let z=0;
-     if(ins.goals.some(g=>g.g==="木曜日の稼働を増やす")&&r.day==="木")z+=20;
-     if(ins.goals.some(g=>g.g==="金曜日の生産を減らす")&&r.day==="金")z-=15;
-     if(ins.goals.some(g=>g.g==="可能な範囲で前倒し"))z+=(DAYS.indexOf(r.day)<4?5:0);
-     if(ins.goals.some(g=>g.g==="可能な範囲で後ろ倒し"))z+=(DAYS.indexOf(r.day)>3?5:0);
+     if(ins.goals.some(g=>g.g==="木曜日の稼働を増やす")&&r.day==="木")z+=10000;
+     if(ins.goals.some(g=>g.g==="金曜日の生産を減らす")&&r.day==="金")z-=6000;
+     if(ins.goals.some(g=>g.g==="可能な範囲で前倒し"))z+=(DAYS.indexOf(r.day)<4?500:0);
+     if(ins.goals.some(g=>g.g==="可能な範囲で後ろ倒し"))z+=(DAYS.indexOf(r.day)>3?500:0);
+     if(ins.goals.some(g=>g.g==="同一製品の連続生産を優先"))z+=r.product?200:0;
      return z;
    };
-   fresh.rows.sort((a,b)=>scoreDay(b)-scoreDay(a));
-   if(ins.goals.some(g=>g.g==="同一製品の連続生産を優先")||ins.goals.some(g=>g.g==="切替・段取りを減らす")){
-     fresh.rows.sort((a,b)=>a.product.localeCompare(b.product)||DAYS.indexOf(a.day)-DAYS.indexOf(b.day));
+   const currentScore=planObjective(rows).score+rows.reduce((a,r)=>a+bias(r),0);
+   const freshScore=planObjective(fresh.rows).score+fresh.rows.reduce((a,r)=>a+bias(r),0);
+   if(!fresh.unallocated.length && freshScore>currentScore){
+     rows=fresh.rows;
+     changes.push("コメントの意図を反映し、曜日配分・生産順序・段取りを総合評価して計画を組み直しました");
    }
-   // Prefer the intent candidate only when it remains feasible and does not reduce demand fulfillment.
-   if(!fresh.unallocated.length){rows=fresh.rows;changes.push("コメントの意図を反映して、生産順序・曜日配分を再評価しました")}
  }
+
+ // Clean tiny numerical fragments.
+ rows=rows.filter(r=>n(r.qty)>0.001).map(r=>({...r,minutes:Math.max(0,n(r.minutes)),setup:Math.max(0,n(r.setup))}));
  return {rows,changes};
 }
-
 function adjustPage(){
  const base=basePlan();
  app.innerHTML=`<div class="card"><h2>最終調整</h2>
