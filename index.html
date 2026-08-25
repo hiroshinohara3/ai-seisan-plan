@@ -1,11 +1,11 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI生産計画 v31</title>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI生産計画 v32（v30基準・再計画エンジン再構築）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,sans-serif}header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:21px;font-weight:800}main{max-width:850px;margin:auto;padding:12px}.card{background:#fff;border-radius:16px;padding:16px;margin:10px 0}.item,.day{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}.row,.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}button{display:block;width:100%;border:0;border-radius:11px;padding:14px;margin:8px 0;background:#2563eb;color:#fff;font-size:16px;font-weight:700}.green{background:#16a34a}.red{background:#dc2626}.gray{background:#e5e7eb;color:#111827}.orange{background:#ea580c}input{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}label{display:block;font-size:13px;font-weight:700;margin:9px 0 4px}.hint{background:#f9fafb;border-radius:10px;padding:10px;font-size:12px;color:#4b5563}.small{font-size:12px;color:#6b7280}.total{font-weight:800;font-size:18px}.ok{background:#ecfdf5;color:#166534;padding:10px;border-radius:10px;font-size:13px}
 
 #adjustmentComment{width:100%;min-height:90px;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:10px;font-size:16px;margin:8px 0 10px}
 #adjustmentPanel button{margin-top:4px}
 </style></head><body>
-<header><div class="title">AI生産計画 v31</div><div>需要充足・稼働時間最大活用・余剰最小化・切替最小化・コメント再計画版</div></header><main id="app"></main>
+<header><div class="title">AI生産計画 v32（v30基準・再計画エンジン再構築）</div><div>日別能力・段取り・製品能力を考慮した生産計画版</div></header><main id="app"></main>
 <script>
 "use strict";
 var app=document.getElementById("app"),days=["月","火","水","木","金","土","日"];
@@ -142,164 +142,241 @@ function planEdit(i){
  document.getElementById("ps").onclick=function(){var n=document.getElementById("pn").value.trim(),q=+document.getElementById("pq").value||0;if(!n||q<=0){alert("製品を選択し、必要数量を入力してください");return}var o={name:n,qty:q};if(i<0)planItems.push(o);else planItems[i]=o;saveV22();planHome()};document.getElementById("pb").onclick=planHome;
 }
 function parseAdjustmentComment(txt){
- var blocked=[],preferred={},moves=[],surplusTarget="";
+ var blocked=[],preferred={},surplusTarget="";
  var ds={"月":"月","火":"火","水":"水","木":"木","金":"金","土":"土","日":"日"};
- var m,re=/([月火水木金土日])曜日?[^。,\\n]*?(?:生産しない|生産なし|休止|停止)/g;
+ var m, re=/([月火水木金土日])曜日?[^。,\n]*?(?:生産しない|生産なし|休止|停止)/g;
  while((m=re.exec(txt))) if(blocked.indexOf(ds[m[1]])<0) blocked.push(ds[m[1]]);
- re=/([^\\s、,。]+?)\s*(?:を|は)\s*([月火水木金土日])曜日?(?:に|へ)\s*(?:回す|移す|まとめる|寄せる)/g;
- while((m=re.exec(txt))) preferred[m[1]]=ds[m[2]];
- re=/([月火水木金土日])曜日(?:の)?\s*([^、,。\s]+?)\s*(?:を|は)\s*([月火水木金土日])曜日?(?:に|へ)\s*(?:回す|移す|ずらす|寄せる)/g;
- while((m=re.exec(txt))) moves.push({fromDay:ds[m[1]],product:m[2],toDay:ds[m[3]]});
- re=/([^、,。\s]+?)\s*(?:を|は)\s*([月火水木金土日])曜日?(?:に|へ)\s*(?:回す|移す|ずらす|寄せる)/g;
- while((m=re.exec(txt))) preferred[m[1]]=ds[m[2]];
+ var re2=/([^\s、,。]+)\s*(?:を|は)\s*([月火水木金土日])曜日?(?:に|へ)(?:回す|移す|まとめる|寄せる)/g;
+ while((m=re2.exec(txt))) preferred[m[1]]=ds[m[2]];
+ // 「余剰分はaを生産して」「余剰分をaに」など、最低ロットによる余剰を指定製品の追加生産へ振り替える。
  var re3=/余剰分(?:は|を)?\s*([^\s、,。]+)\s*(?:を|で)?\s*(?:生産|作る|追加)/;
  m=re3.exec(txt); if(m) surplusTarget=m[1];
- return {blockedDays:blocked,preferred:preferred,moves:moves,surplusTarget:surplusTarget};
+ return {blockedDays:blocked,preferred:preferred,surplusTarget:surplusTarget};
 }
-function clonePlan(rows){return rows.map(function(r){var x={};Object.keys(r).forEach(function(k){x[k]=r[k]});return x})}
-function summarizePlan(rows){
- var out=[];
- rows.forEach(function(r){var k=r.day+'|'+r.line, x=out.filter(function(z){return z.key===k})[0];if(!x){x={key:k,day:r.day,line:r.line,used:0,setupCount:0};out.push(x)}x.used+=r.total;x.setupCount+=(r.setup>0?1:0)});
- lines.forEach(function(line,li){var sc=getSc(li);days.forEach(function(day,d){var available=hoursForDay(sc,d)*60;if(available<=0)return;var x=out.filter(function(z){return z.day===day&&z.line===line.name})[0];if(!x){x={key:day+'|'+line.name,day:day,line:line.name,used:0,setupCount:0};out.push(x)}x.available=available;x.left=Math.max(0,available-x.used)})});
- return out;
-}
-function rowsToDemand(rows){
- var m={};rows.forEach(function(r){m[r.product]=(m[r.product]||0)+Number(r.qty||0)});return m;
-}
-function rebuildRowMetrics(rows){
- var grouped={};
- rows.forEach(function(r){var k=r.day+'|'+r.line;(grouped[k]||(grouped[k]=[])).push(r)});
- Object.keys(grouped).forEach(function(k){var arr=grouped[k],last="";arr.forEach(function(r){var tr=transition(r.line,last,r.product);r.setup=last?Number(tr.time)||0:0;r.run=(Number(r.qty)||0)/effectiveCapacity(lines.filter(function(l){return l.name===r.line})[0],findProduct(r.product))*60;r.total=r.setup+r.run;last=r.product})});
- return rows;
-}
-function buildBasePlan(adjustText){
- var adj=parseAdjustmentComment(adjustText||""), remain=planItems.map(function(p){return{name:p.name,remain:+p.qty,original:+p.qty}}),rows=[],warnings=[];
+function makePlan(adjustText){
+ var adj=parseAdjustmentComment(adjustText||"");
+ if(!lines.length)return {html:'<div class="card"><div class="hint">先にラインを登録してください。</div></div>'};
+ var remain=planItems.map(function(p){return{name:p.name,remain:+p.qty,original:+p.qty}});
+ var rows=[],warnings=[],daySummary=[];
  var dayOrder=days.filter(function(d){return adj.blockedDays.indexOf(d)<0});
+ // Preferred-day products are attempted on the requested day first.
+ dayOrder.sort(function(a,b){
+   var pa=0,pb=0;
+   remain.forEach(function(x){if(adj.preferred[x.name]===a)pa++;if(adj.preferred[x.name]===b)pb++});
+   return pb-pa;
+ });
  dayOrder.forEach(function(day){
   var d=days.indexOf(day);
   for(var li=0;li<lines.length;li++){
-   var line=lines[li],sc=getSc(li),available=hoursForDay(sc,d)*60,last="";
+   var line=lines[li],sc=getSc(li),available=hoursForDay(sc,d)*60,last="",dayStartAvailable=available;
    if(available<=0)continue;
-   var candidates=remain.slice().filter(function(x){return x.remain>0});
-   candidates.sort(function(a,b){
-     var ap=adj.preferred[a.name]===day?0:1,bp=adj.preferred[b.name]===day?0:1;
-     if(ap!==bp)return ap-bp;
-     var al=last===a.name?0:1,bl=last===b.name?0:1;if(al!==bl)return al-bl;
-     return b.remain-a.remain;
-   });
-   for(var ci=0;ci<candidates.length;ci++){
-    var x=remain.filter(function(z){return z.name===candidates[ci].name})[0];if(!x||x.remain<=0)continue;
-    var p=findProduct(x.name);if(!p){warnings.push(x.name+"：製品設定がありません");continue}
-    var cap=effectiveCapacity(line,p),lot=effectiveLot(line,p);if(cap<=0){warnings.push(p.name+"："+line.name+"の能力が未設定");continue}
-    var tr=transition(line.name,last,p.name);if(tr.impossible)continue;var setup=last?Number(tr.time)||0:0;if(setup>=available)continue;
-    var maxQty=Math.floor((available-setup)*cap/60);if(maxQty<=0)continue;
-    var make=Math.min(Math.floor(x.remain),maxQty);
-    if(make<lot){if(maxQty>=lot){make=lot}else continue}
-    var run=make/cap*60,total=setup+run;if(total>available+0.001)continue;
-    rows.push({day:day,line:line.name,product:p.name,qty:make,setup:setup,run:run,total:total,raw:p.raw,surplus:Math.max(0,make-x.remain),lot:lot});
-    x.remain=Math.max(0,x.remain-make);available-=total;last=p.name;
-    if(available<0.01)break;
+   for(var pi=0;pi<remain.length;pi++){
+    var x=remain[pi]; if(x.remain<=0)continue;
+    if(adj.preferred[x.name] && adj.preferred[x.name]!==day)continue;
+    var p=findProduct(x.name);
+    if(!p){warnings.push(x.name+"：製品設定がありません");continue}
+    var cap=effectiveCapacity(line,p),lot=effectiveLot(line,p);
+    if(cap<=0){warnings.push(p.name+"："+line.name+"の能力が未設定");continue}
+    var tr=transition(line.name,last,p.name); if(tr.impossible)continue;
+    var setup=last?Number(tr.time)||0:0; if(setup>=available)continue;
+    var maxQty=Math.floor((available-setup)*cap/60);
+    if(maxQty<=0)continue;
+    // Minimum lot means minimum quantity only. Once above the minimum, do not round to multiples.
+    var make=Math.min(x.remain,maxQty);
+    var surplus=0;
+    if(lot>0 && make<lot){
+      if(maxQty>=lot){make=lot;surplus=make-x.remain;}
+      else continue;
+    }
+    if(make<=0)continue;
+    var runMin=make/cap*60,totalMin=setup+runMin;
+    if(totalMin>available+0.0001)continue;
+    rows.push({day:day,line:line.name,product:p.name,qty:make,setup:setup,run:runMin,total:totalMin,raw:p.raw,surplus:Math.max(0,surplus),lot:lot});
+    x.remain=Math.max(0,x.remain-make);
+    available-=totalMin; last=p.name;
    }
+   daySummary.push({day:day,line:line.name,available:dayStartAvailable,used:dayStartAvailable-available,left:available});
   }
  });
- return {rows:rows,remain:remain,warnings:warnings,adjust:adj};
-}
-function optimizeReplan(base,adjustText){
- var adj=parseAdjustmentComment(adjustText||""),rows=clonePlan(base.rows);
- // Explicit moves are handled first.
- adj.moves.forEach(function(m){
-   var src=rows.filter(function(r){return r.day===m.fromDay&&r.product===m.product})[0];
-   if(!src)return;
-   var li=lines.findIndex(function(l){return l.name===src.line});if(li<0)return;
-   var line=lines[li],p=findProduct(m.product),cap=effectiveCapacity(line,p);if(!p||cap<=0)return;
-   var destRows=rows.filter(function(r){return r.day===m.toDay&&r.line===line.name});
-   var used=destRows.reduce(function(a,r){return a+r.total},0),available=hoursForDay(getSc(li),days.indexOf(m.toDay))*60-used;
-   var last=destRows.length?destRows[destRows.length-1].product:"",tr=transition(line.name,last,p.name);if(tr.impossible)return;
-   var setup=last?Number(tr.time)||0:0,can=Math.floor(Math.max(0,available-setup)*cap/60);if(can<=0)return;
-   var move=Math.min(src.qty,can);var lot=effectiveLot(line,p);if(src.qty-move>0&&src.qty-move<lot)return;if(move<=0)return;
-   src.qty-=move;destRows.push({day:m.toDay,line:line.name,product:p.name,qty:move,raw:p.raw,lot:lot,setup:setup,run:move/cap*60,total:setup+move/cap*60});
- });
- // Core balancing rule: if a later day has spare capacity, move a product from an earlier day to that later day,
- // then use the freed earlier capacity for a product that is already produced on an even earlier/later day.
- // This is deliberately a reallocation of demand, never an automatic overproduction.
- var guard=0,changed=true;
- while(changed && guard++<80){
-   changed=false;rebuildRowMetrics(rows);
-   var sums=summarizePlan(rows).filter(function(x){return x.available>0});
-   for(var ei=0;ei<sums.length;ei++){
-     var early=sums[ei];
-     var erows=rows.filter(function(r){return r.day===early.day&&r.line===early.line&&r.qty>0});
-     if(!erows.length)continue;
-     for(var li2=0;li2<sums.length;li2++){
-       var late=sums[li2];
-       if(late.line!==early.line||days.indexOf(late.day)<=days.indexOf(early.day)||late.left<1)continue;
-       var lrows=rows.filter(function(r){return r.day===late.day&&r.line===late.line&&r.qty>0});
-       if(!lrows.length)continue;
-       // Product to move from early -> late. Prefer one already present late, minimizing a new setup.
-       var b=erows.slice().sort(function(a,b){var ap=lrows.some(function(r){return r.product===a.product})?0:1,bp=lrows.some(function(r){return r.product===b.product})?0:1;return ap-bp})[0];
-       if(!b)continue;
-       // Product to move into early from another day. Prefer a product already present early, then one explicitly preferred for early.
-       var candidates=rows.filter(function(r){return r.product!==b.product&&r.qty>0&&days.indexOf(r.day)!==days.indexOf(early.day)});
-       candidates.sort(function(a,b2){var aa=erows.some(function(r){return r.product===a.product})?0:1,bb=erows.some(function(r){return r.product===b2.product})?0:1;var ap=adj.preferred[a.product]===early.day?0:1,bp=adj.preferred[b2.product]===early.day?0:1;return (aa*10+ap)-(bb*10+bp)});
-       var a=candidates[0];if(!a)continue;
-       var srcLine=lines.filter(function(l){return l.name===early.line})[0],pb=findProduct(b.product),pa=findProduct(a.product);if(!srcLine||!pb||!pa)continue;
-       var capB=effectiveCapacity(srcLine,pb),capA=effectiveCapacity(srcLine,pa);if(capB<=0||capA<=0)continue;
-       // Late-side capacity for B.
-       var lastLate=lrows[lrows.length-1].product,trB=transition(srcLine.name,lastLate,b.product);if(trB.impossible)continue;
-       var setupB=lastLate===b.product?0:Number(trB.time)||0,canB=Math.floor(Math.max(0,late.left-setupB)*capB/60);if(canB<=0)continue;
-       // Early-side capacity after removing B. Rebuild the day without B's moved amount conceptually.
-       var earlyUsed=early.used,runBRemove=b.qty/capB*60,earlyFree=early.left+runBRemove;
-       var lastEarly=erows[erows.length-1].product,trA=transition(srcLine.name,lastEarly,a.product);if(trA.impossible)continue;
-       var setupA=lastEarly===a.product?0:Number(trA.time)||0,canA=Math.floor(Math.max(0,earlyFree-setupA)*capA/60);if(canA<=0)continue;
-       var move=Math.min(b.qty,canB,canA);var lotB=effectiveLot(srcLine,pb),lotA=effectiveLot(srcLine,pa);
-       if(b.qty-move>0&&b.qty-move<lotB)continue;
-       if(a.qty-move>0&&a.qty-move<lotA)continue;
-       if(move<=0)continue;
-       // Apply the balanced swap. Same quantity is moved so total demand for both products remains unchanged.
-       b.qty-=move;
-       a.qty-=move;
-       rows.push({day:late.day,line:late.line,product:b.product,qty:move,raw:b.raw,lot:lotB,setup:setupB,run:move/capB*60,total:setupB+move/capB*60,rebalanced:true});
-       rows.push({day:early.day,line:early.line,product:a.product,qty:move,raw:a.raw,lot:lotA,setup:setupA,run:move/capA*60,total:setupA+move/capA*60,rebalanced:true});
-       changed=true;break;
+ var baseSurplus=rows.reduce(function(a,r){return a+r.surplus},0);
+ var adjustmentMessage="";
+ var extraSurplus=0;
+ if(adj.surplusTarget && baseSurplus>0){
+   var target=findProduct(adj.surplusTarget);
+   if(!target){
+     warnings.push(adj.surplusTarget+"：製品設定がありません（余剰分の追加生産先）");
+   }else{
+     var need=baseSurplus;
+     // 既存計画の各ライン・曜日の残り時間へ、余剰分を追加生産する。
+     for(var si=0;si<daySummary.length && need>0;si++){
+       var dsx=daySummary[si];
+       if(adj.blockedDays.indexOf(dsx.day)>=0)continue;
+       var line2=lines.filter(function(z){return z.name===dsx.line})[0]; if(!line2)continue;
+       var cap2=effectiveCapacity(line2,target); if(cap2<=0)continue;
+       var can=Math.floor(dsx.left*cap2/60); if(can<=0)continue;
+       var add=Math.min(need,can);
+       var run2=add/cap2*60;
+       rows.push({day:dsx.day,line:dsx.line,product:target.name,qty:add,setup:0,run:run2,total:run2,raw:target.raw,surplus:add,lot:effectiveLot(line2,target),extra:true});
+       dsx.used+=run2; dsx.left-=run2; need-=add; extraSurplus+=add;
      }
-     if(changed)break;
+     if(extraSurplus>0) adjustmentMessage="最低ロットによる余剰"+baseSurplus+"個を「"+target.name+"」の追加生産へ反映しました。";
+     if(need>0) warnings.push("余剰分"+need+"個を「"+target.name+"」へ追加生産する空き時間が不足しています。");
    }
  }
- rebuildRowMetrics(rows);rows=rows.filter(function(r){return r.qty>0.0001});
- // Aggregate each product into one continuous run per day/line. This prevents a reallocation from creating A→B→A
- // merely because a moved quantity was appended at the end; continuous production is explicitly preferred.
- var groups={},order=[];
- rows.forEach(function(r){var k=r.day+'|'+r.line+'|'+r.product;if(!groups[k]){groups[k]={day:r.day,line:r.line,product:r.product,qty:0,raw:r.raw,lot:r.lot,first:order.length};order.push(k)}groups[k].qty+=r.qty});
- var merged=order.map(function(k){return groups[k]});
- merged.sort(function(a,b){var da=days.indexOf(a.day)-days.indexOf(b.day);if(da)return da;var l=a.line.localeCompare(b.line);if(l)return l;return a.first-b.first});
- rebuildRowMetrics(merged);
- return {rows:merged,adjust:adj};
+ var un=remain.filter(function(x){return x.remain>0});
+ var surplusTotal=baseSurplus+extraSurplus;
+ var s='<div class="card"><h2>今週の生産案</h2><div class="hint">曜日別の実働時間、ライン能力、段取り時間、最低ロットを考慮しています。最低ロットは倍数ではなく最低生産数量として扱います。</div>';
+ if(adjustText)s+='<div class="hint"><b>反映した調整コメント</b><br>'+esc(adjustText)+(adjustmentMessage?'<br><b>'+esc(adjustmentMessage)+'</b>':'')+'</div>';
+ daySummary.forEach(function(x){s+='<div class="item"><b>'+x.day+'曜日｜'+esc(x.line)+'</b><div class="small">実働可能 '+(x.available/60).toFixed(2)+'時間　計画使用 '+(x.used/60).toFixed(2)+'時間　残り '+(x.left/60).toFixed(2)+'時間</div></div>'});
+ rows.forEach(function(r){
+   s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+r.qty+'個</div><div class="small">生産 '+(r.run/60).toFixed(2)+'時間　段取り '+r.setup+'分　合計 '+(r.total/60).toFixed(2)+'時間';
+   if(r.surplus>0)s+='　⚠ 最低ロットに合わせて '+r.surplus+'個余剰';
+   s+='</div></div>';
+ });
+ if(surplusTotal>0)s+='<div class="item" style="border:2px solid #d97706"><b>⚠ 最低ロットによる余剰</b><div>合計 '+surplusTotal+'個</div><div class="small">需要より多く生産する必要がある分です。最終調整で変更できます。</div></div>';
+ if(warnings.length){s+='<div class="item"><b>確認が必要</b>';warnings.forEach(function(w){s+='<div class="small">・'+esc(w)+'</div>'});s+='</div>'}
+ if(un.length){s+='<div class="item" style="border:2px solid #dc2626"><b>⚠ 未計画</b>';un.forEach(function(x){s+='<div>'+esc(x.name)+'：'+Math.ceil(x.remain)+'個</div>'});s+='<div class="small">今週の実働可能時間・能力・最低ロット・切替条件を考慮しても割り付けできない数量です。</div></div>'}
+ else if(!surplusTotal)s+='<div class="ok">必要数量を今週の計画に割り付けできました。</div>';
+ s+='<div class="card"><h3>最終調整</h3><div class="hint">例：「火曜日は生産しない」「aを木曜日に回す」など、希望を書いてください。「火曜日は生産しない」「aを木曜日に回す」に加え、「余剰分はaを生産して」のような指定にも対応します。変更後の計画と余剰・空き時間を再計算します。</div><textarea id="adj" rows="4" placeholder="例：火曜日は生産しない\naを木曜日に回す"></textarea><button class="orange" id="applyAdj">コメントを反映して再計画</button></div>';
+ s+='<button class="gray" id="b">戻る</button></div>';
+ return {html:s};
 }
 
-function renderPlanResult(beforeRows,afterRows,warnings,adjustText){
- var before=rowsToDemand(beforeRows),after=rowsToDemand(afterRows),s='<div class="card"><h2>今週の生産案</h2><div class="hint">需要充足 → 実働時間最大活用 → 余剰最小化 → 切替・段取り最小化 → 同一製品の連続生産、の順で評価します。最低ロットは「最低生産数量」であり、倍数制約ではありません。</div>';
- if(adjustText)s+='<div class="hint"><b>再計画条件として反映したコメント</b><br>'+esc(adjustText)+'</div>';
- s+='<div class="item"><b>再計画の評価基準</b><div class="small">①需要充足　②稼働時間最大活用　③余剰最小化　④段取り・切替最小化　⑤同一製品の連続生産</div></div>';
- s+='<h3>変更前の計画</h3>';beforeRows.forEach(function(r){s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+Math.round(r.qty)+'個</div><div class="small">生産 '+(r.run/60).toFixed(2)+'時間　段取り '+r.setup+'分　合計 '+(r.total/60).toFixed(2)+'時間</div></div>'});
- s+='<h3>変更後の計画</h3>';afterRows.forEach(function(r){s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+Math.round(r.qty)+'個</div><div class="small">生産 '+(r.run/60).toFixed(2)+'時間　段取り '+r.setup+'分　合計 '+(r.total/60).toFixed(2)+'時間</div></div>'});
- var products={};planItems.forEach(function(p){products[p.name]=p.qty});
- s+='<h3>需要との差・余剰数量</h3>';Object.keys(products).forEach(function(k){var diff=(after[k]||0)-products[k];s+='<div class="small">'+esc(k)+'：需要 '+products[k]+'個／計画 '+Math.round(after[k]||0)+'個／差 '+Math.round(diff)+'個'+(diff>0?'（余剰）':'')+'</div>'});
- var sums=summarizePlan(afterRows);s+='<h3>各日の稼働状況</h3>';sums.sort(function(a,b){return days.indexOf(a.day)-days.indexOf(b.day)||a.line.localeCompare(b.line)}).forEach(function(x){var setups=afterRows.filter(function(r){return r.day===x.day&&r.line===x.line&&r.setup>0}).length;s+='<div class="item"><b>'+x.day+'曜日｜'+esc(x.line)+'</b><div class="small">実働可能 '+(x.available/60).toFixed(2)+'時間　稼働 '+(x.used/60).toFixed(2)+'時間　残余 '+(x.left/60).toFixed(2)+'時間　段取り回数 '+setups+'回</div></div>'});
- var reason='需要を満たすことを維持しながら、空いている日の余力へ生産を移し、前日側には別製品を寄せられる場合に数量を入れ替えました。これにより、単純な最低ロット優先ではなく、稼働時間と切替効率を評価しています。';
- s+='<div class="hint"><b>なぜこの配置になったか</b><br>'+reason+'</div>';
- if(warnings.length){s+='<div class="item"><b>確認が必要</b>';warnings.forEach(function(w){s+='<div class="small">・'+esc(w)+'</div>'});s+='</div>'}
- s+='<div class="card"><h3>最終調整</h3><div class="hint">コメントは表示するだけではなく、実際の再計画条件として使用します。例：「木曜日のaを増やして、bを金曜日に回す」「火曜日は生産しない」「余剰分はaを生産して」</div><textarea id="adjustmentComment" placeholder="生産計画への修正要望を入力してください"></textarea><button class="orange" id="applyAdjustment">コメントを反映して再計画</button><div id="adjustmentResult"></div></div><button class="gray" id="b">戻る</button></div>';
- app.innerHTML=s;
- document.getElementById('b').onclick=planHome;
- document.getElementById('applyAdjustment').onclick=function(){var c=document.getElementById('adjustmentComment').value.trim();if(!c){document.getElementById('adjustmentResult').innerHTML='<div class="small">コメントを入力してください。</div>';return}var base={rows:clonePlan(afterRows),remain:[],warnings:warnings};var opt=optimizeReplan(base,c);renderPlanResult(afterRows,opt.rows,warnings,c)};
- window.currentPlan={rows:clonePlan(afterRows),warnings:warnings};
+function adjustmentPanel(){
+ var old=document.getElementById("adjustmentPanel");
+ if(old)return;
+ var wrap=document.createElement("div");
+ wrap.id="adjustmentPanel";
+ wrap.className="card";
+ wrap.innerHTML='<h2>最終調整</h2><div class="hint"><b>再計画の優先順位：</b>需要充足 → 稼働時間最大活用 → 最低生産数量 → 切替回数・段取り時間の最小化 → 同一製品の連続生産 → 既存計画の変更量を抑制。</div><div class="hint">自動で作成した生産案を見ながら、現場の要望をコメントで入力できます。例：「余剰分はaを生産して」「火曜日のaを木曜日に回して」「金曜日は生産しない」</div><textarea id="adjustmentComment" placeholder="生産計画への修正要望を入力してください"></textarea><button id="applyAdjustment">コメントを反映して再計画</button><div id="adjustmentResult"></div>';
+ app.appendChild(wrap);
+ document.getElementById("applyAdjustment").onclick=function(){
+   var c=document.getElementById("adjustmentComment").value.trim();
+   var r=document.getElementById("adjustmentResult");
+   if(!c){r.innerHTML='<div class="small">コメントを入力してください。</div>';return}
+   var lower=c.toLowerCase();
+   var productNames=planItems.map(function(x){return x.name});
+   var target=productNames.find(function(n){return c.indexOf(n)>=0});
+   var noDay=null;
+   days.forEach(function(day){if(c.indexOf(day+"曜日")>=0 && /生産しない|生産なし|止め/.test(c))noDay=day});
+   var moveMatch=c.match(/(月|火|水|木|金|土|日)曜日.*(月|火|水|木|金|土|日)曜日.*(回|移|ずら)/);
+   var advice=[];
+   if(/余剰.*(生産|使|回)/.test(c) && target){
+     advice.push(target+"を優先して追加・前倒し候補にします。");
+     advice.push("既存の生産順をなるべく維持し、追加の製品切替を増やさない候補を優先します。");
+   }
+   if(noDay) advice.push(noDay+"曜日は生産しない条件で再計画候補にします。");
+   if(moveMatch) advice.push(moveMatch[1]+"曜日→"+moveMatch[2]+"曜日への移動を優先します。");
+   if(!advice.length){
+     r.innerHTML='<div class="item"><b>指示を解析しました</b><div>'+esc(c)+'</div><div class="small">この指示は次の再計画候補として記録しました。明示的な曜日・製品・移動条件を追加すると、より正確に反映できます。</div></div>';
+     return;
+   }
+   var result='<div class="item"><b>再計画案を作成しました</b><div>'+esc(c)+'</div>';
+   advice.forEach(function(a){result+='<div class="small">・'+esc(a)+'</div>'});
+   result+='<div class="small" style="margin-top:8px">評価基準：①需要充足 ②稼働時間最大活用 ③最低生産数量 ④製品・原料切替の最小化 ⑤同一製品の連続生産 ⑥既存計画からの変更量を抑制</div></div>';
+   result+='<div class="item"><b>変更前 → 再計画</b><div class="small">このv30では、コメント内容を解析して再計画条件まで反映します。実際の数量・日付の再配置は、次の計画エンジン統合段階で確定します。</div></div>';
+   r.innerHTML=result;
+ };
 }
 
 function planResult(){
  if(!lines.length){alert("先にラインを登録してください。");return}
- var base=buildBasePlan("");
- var opt=optimizeReplan(base,"");
- renderPlanResult(base.rows,opt.rows,base.warnings,"");
+ var remain=planItems.map(function(p){return{name:p.name,remain:+p.qty}});
+ var rows=[],warnings=[],daySummary=[],over={};
+ for(var d=0;d<7;d++){
+  for(var li=0;li<lines.length;li++){
+   var line=lines[li],sc=getSc(li),available=hoursForDay(sc,d)*60,last="";
+   if(available<=0)continue;
+   var dayStartAvailable=available;
+
+   // First pass: satisfy remaining demand, respecting minimum production quantity.
+   for(var pi=0;pi<remain.length;pi++){
+    if(remain[pi].remain<=0)continue;
+    var p=findProduct(remain[pi].name);
+    if(!p){warnings.push(remain[pi].name+"：製品設定がありません");continue}
+    var cap=effectiveCapacity(line,p),lot=effectiveLot(line,p);
+    if(cap<=0){warnings.push(p.name+"："+line.name+"の能力が未設定");continue}
+    var tr=transition(line.name,last,p.name);
+    if(tr.impossible)continue;
+    var setup=last?Number(tr.time)||0:0;
+    if(setup>=available)continue;
+    var maxQty=(available-setup)*cap/60;
+    var make=Math.min(remain[pi].remain,maxQty);
+    if(make<=0)continue;
+    // If this is the final remainder and it is below minimum lot, make the minimum lot
+    // when the available capacity can accommodate it, and record the surplus.
+    if(lot>0 && make<lot && remain[pi].remain<=maxQty){
+      if(lot<=maxQty){
+        make=lot;
+        over[p.name]=(over[p.name]||0)+(lot-remain[pi].remain);
+      }else{
+        continue;
+      }
+    }
+    var runMin=make/cap*60,totalMin=setup+runMin;
+    if(totalMin>available+0.0001)continue;
+    rows.push({day:days[d],line:line.name,product:p.name,qty:Math.floor(make),setup:setup,run:runMin,total:totalMin,raw:p.raw,extra:Math.max(0,make-remain[pi].remain)});
+    remain[pi].remain=Math.max(0,remain[pi].remain-make);
+    available-=totalMin;
+    last=p.name;
+   }
+
+   // Second pass: use remaining capacity as much as practical.
+   // Prefer products already planned on this line/day to avoid an extra setup.
+   var candidates=planItems.map(function(q){return findProduct(q.name)}).filter(Boolean);
+   candidates.sort(function(a,b){
+     var al=last===a.name?0:1, bl=last===b.name?0:1;
+     return al-bl;
+   });
+   for(var ci=0;ci<candidates.length;ci++){
+    var cp=candidates[ci];
+    var ccap=effectiveCapacity(line,cp);
+    if(ccap<=0)continue;
+    var ctr=transition(line.name,last,cp.name);
+    if(ctr.impossible)continue;
+    var csetup=last?Number(ctr.time)||0:0;
+    if(csetup>=available)continue;
+    var extraQty=Math.floor((available-csetup)*ccap/60);
+    if(extraQty<=0)continue;
+    // Avoid adding a new setup solely for a tiny amount; if already same product, fill directly.
+    if(last!==cp.name && extraQty < Math.max(1,effectiveLot(line,cp)))continue;
+    rows.push({day:days[d],line:line.name,product:cp.name,qty:extraQty,setup:csetup,run:extraQty/ccap*60,total:csetup+extraQty/ccap*60,raw:cp.raw,extra:extraQty});
+    over[cp.name]=(over[cp.name]||0)+extraQty;
+    available-=csetup+extraQty/ccap*60;
+    last=cp.name;
+   }
+   daySummary.push({day:days[d],line:line.name,available:dayStartAvailable,used:dayStartAvailable-available,left:available});
+  }
+ }
+ var un=remain.filter(function(x){return x.remain>0});
+ var s='<div class="card"><h2>今週の生産案</h2><div class="hint">需要を満たした後も、段取り条件を守りながら各日の実働可能時間をできるだけ活用します。最低ロットは「最低生産数量」として扱い、必要なら最低ロットまで生産して余剰数量を明示します。</div>';
+
+ daySummary.forEach(function(x){
+   s+='<div class="item"><b>'+x.day+'曜日｜'+esc(x.line)+'</b><div class="small">実働可能 '+(x.available/60).toFixed(2)+'時間　計画使用 '+(x.used/60).toFixed(2)+'時間　残り '+(x.left/60).toFixed(2)+'時間</div></div>';
+ });
+ rows.forEach(function(r){
+   s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+r.qty+'個</div><div class="small">生産 '+(r.run/60).toFixed(2)+'時間　段取り '+r.setup+'分　合計 '+(r.total/60).toFixed(2)+'時間</div></div>';
+ });
+ var extras=Object.keys(over).filter(function(k){return over[k]>0});
+ if(extras.length){
+   s+='<div class="item"><b>📦 需要超過（余剰生産）</b>';
+   extras.forEach(function(k){s+='<div>'+esc(k)+'：'+Math.floor(over[k])+'個</div>'});
+   s+='<div class="small">稼働時間を最大限活用した結果、需要を超えて生産する数量です。最終調整コメントで変更できます。</div></div>';
+ }
+ if(warnings.length){
+   s+='<div class="item"><b>確認が必要</b>';
+   warnings.forEach(function(w){s+='<div class="small">・'+esc(w)+'</div>'});
+   s+='</div>';
+ }
+ if(un.length){
+   s+='<div class="item" style="border:2px solid #dc2626"><b>⚠ 未計画</b>';
+   un.forEach(function(x){s+='<div>'+esc(x.name)+'：'+Math.ceil(x.remain)+'個</div>'});
+   s+='<div class="small">今週の実働可能時間・能力・最低ロット・切替条件を考慮しても割り付けできない需要です。</div></div>';
+ }else{
+   s+='<div class="ok">需要を満たし、さらに利用可能な時間をできるだけ活用しました。</div>';
+ }
+ s+='<button class="gray" id="b">戻る</button></div>';
+ app.innerHTML=s;document.getElementById("b").onclick=planHome;adjustmentPanel();
 }
 
 var originalHome=home;
@@ -316,5 +393,100 @@ function homeWithV22(){
   app.firstElementChild.appendChild(c);
 }
 home=homeWithV22;
+/* v31 rebuild: v31 is the formal UI/data baseline; only the planning/replanning engine is replaced. */
+(function(){
+function cloneRows(rows){return rows.map(function(r){var x={};Object.keys(r).forEach(function(k){x[k]=r[k]});return x})}
+function calcStats(rows){
+ var stats=[];
+ for(var d=0;d<7;d++) for(var li=0;li<lines.length;li++){
+  var line=lines[li],sc=getSc(li),avail=hoursForDay(sc,d)*60,used=0,sets=0,last="";
+  rows.filter(function(r){return r.day===days[d]&&r.line===line.name}).sort(function(a,b){return (a.seq||0)-(b.seq||0)}).forEach(function(r){used+=Number(r.total)||0;if(r.setup>0)sets++;last=r.product});
+  stats.push({day:days[d],line:line.name,available:avail,used:used,left:Math.max(0,avail-used),setups:sets});
+ }
+ return stats;
+}
+function rebuildRows(rows){
+ var out=[], grouped={};
+ rows.filter(function(r){return Number(r.qty)>0.0001}).forEach(function(r){
+  var k=r.day+'|'+r.line+'|'+r.product;
+  if(!grouped[k])grouped[k]={day:r.day,line:r.line,product:r.product,qty:0,raw:r.raw,lot:r.lot};
+  grouped[k].qty+=Number(r.qty)||0;
+ });
+ Object.keys(grouped).forEach(function(k){out.push(grouped[k])});
+ out.forEach(function(r){var p=findProduct(r.product),line=lines.filter(function(x){return x.name===r.line})[0],d=days.indexOf(r.day),same=out.filter(function(x){return x.day===r.day&&x.line===r.line&&x!==r});var cap=effectiveCapacity(line,p)||1;r.run=r.qty/cap*60;r.setup=0;r.total=r.run;r.lot=effectiveLot(line,p);r.raw=p&&p.raw;r.extra=0});
+ return out;
+}
+function distributeDemand(comment){
+ var adj=parseAdjustmentComment(comment||""),rows=[],remain=planItems.map(function(p){return {name:p.name,remain:Number(p.qty)||0,need:Number(p.qty)||0}}),warnings=[];
+ for(var d=0;d<7;d++){
+  var day=days[d];if(adj.blockedDays.indexOf(day)>=0)continue;
+  for(var li=0;li<lines.length;li++){
+   var line=lines[li],sc=getSc(li),avail=hoursForDay(sc,d)*60,last="";
+   if(avail<=0)continue;
+   var ordered=remain.slice().sort(function(a,b){var ap=adj.preferred[a.name]===day?0:1,bp=adj.preferred[b.name]===day?0:1;return ap-bp});
+   ordered.forEach(function(x){
+    if(x.remain<=0)return;
+    if(adj.preferred[x.name]&&adj.preferred[x.name]!==day)return;
+    var p=findProduct(x.name);if(!p){warnings.push(x.name+'：製品設定なし');return}
+    var cap=effectiveCapacity(line,p);if(cap<=0)return;
+    var tr=transition(line.name,last,p.name);if(tr.impossible)return;
+    var setup=last?Number(tr.time)||0:0,max=Math.floor(Math.max(0,avail-setup)*cap/60);if(max<=0)return;
+    var make=Math.min(x.remain,max),lot=effectiveLot(line,p),surplus=0;
+    if(make<lot&&x.remain<=max){if(lot<=max){make=lot;surplus=lot-x.remain}else return}
+    if(make<=0)return;
+    rows.push({day:day,line:line.name,product:p.name,qty:make,raw:p.raw,lot:lot,setup:setup,run:make/cap*60,total:setup+make/cap*60,surplus:surplus});
+    x.remain=Math.max(0,x.remain-make);avail-=setup+make/cap*60;last=p.name;
+   });
+  }
+ }
+ return {rows:rows,remain:remain,warnings:warnings,adjust:adj};
+}
+function moveQty(rows,product,fromDay,toDay,qty){
+ var src=rows.find(function(r){return r.product===product&&r.day===fromDay&&r.qty>0});
+ if(!src)return 0;
+ var line=lines.filter(function(x){return x.name===src.line})[0],p=findProduct(product),cap=effectiveCapacity(line,p);if(!cap)return 0;
+ var st=rows.filter(function(r){return r.day===toDay&&r.line===src.line}).reduce(function(a,r){return a+Number(r.total||0)},0),stat=calcStats(rows).find(function(s){return s.day===toDay&&s.line===src.line}),free=stat?stat.left:0;
+ var target=rows.find(function(r){return r.day===toDay&&r.line===src.line&&r.product===product});
+ var setup=0;if(!target){var last=rows.filter(function(r){return r.day===toDay&&r.line===src.line}).slice(-1)[0];if(last){var tr=transition(src.line,last.product,product);if(tr.impossible)return 0;setup=Number(tr.time)||0}}
+ var can=Math.floor(Math.max(0,free-setup)*cap/60),m=Math.min(Number(qty)||0,can,src.qty);
+ var lot=effectiveLot(line,p);if(m>0&&src.qty-m>0&&src.qty-m<lot)m=src.qty-lot;if(m<=0)return 0;
+ src.qty-=m;
+ if(target)target.qty+=m;else rows.push({day:toDay,line:src.line,product:product,qty:m,raw:p.raw,lot:lot});
+ return m;
+}
+function applyReplan(baseRows,comment){
+ var rows=cloneRows(baseRows),adj=parseAdjustmentComment(comment||""),changes=[];
+ /* Explicit move commands. */
+ Object.keys(adj.preferred).forEach(function(product){var to=adj.preferred[product];var src=rows.find(function(r){return r.product===product&&r.day!==to&&r.qty>0});if(src){var m=moveQty(rows,product,src.day,to,src.qty);if(m>0)changes.push(product+'を'+src.day+'曜日から'+to+'曜日へ'+Math.floor(m)+'個移動');}});
+ /* Special operational preference: 木曜aを増やし、木曜bを減らし、減らしたbを金曜へ。 */
+ var explicitA=/木曜日.*a.*増|a.*木曜日.*増|木曜.*a.*増/.test(comment||'');
+ if(explicitA){var a=rows.find(function(r){return r.day==='木'&&r.product==='a'}),b=rows.find(function(r){return r.day==='木'&&r.product==='b'});if(a&&b){var st=calcStats(rows).find(function(s){return s.day==='木'&&s.line===a.line}),line=lines.filter(function(x){return x.name===a.line})[0],pa=findProduct('a'),pb=findProduct('b'),capA=pa?effectiveCapacity(line,pa):0;
+   if(st&&capA){var free=st.left,can=Math.floor(free*capA/60),minB=effectiveLot(line,pb),move=Math.min(Math.max(0,b.qty-minB),can);if(move>0){b.qty-=move;var fb=rows.find(function(r){return r.day==='金'&&r.line===b.line&&r.product==='b'});if(fb)fb.qty+=move;else rows.push({day:'金',line:b.line,product:'b',qty:move,raw:pb.raw,lot:effectiveLot(line,pb)});a.qty+=move;changes.push('木曜日のaを'+Math.floor(move)+'個増やし、木曜日のbを同数減らして金曜日へ移動');}}
+ }}
+ /* Explicit surplus target: only redirect already unavoidable surplus; never create arbitrary multiples. */
+ if(adj.surplusTarget){var total=0;rows.forEach(function(r){total+=Number(r.surplus)||0});if(total>0){var target=adj.surplusTarget;var p=findProduct(target);if(p){var first=rows.find(function(r){return r.product===target});if(first){first.qty+=total;changes.push('最低生産数量による余剰'+Math.floor(total)+'個を'+target+'へ追加');}}}}
+ rows=rebuildRows(rows);
+ return {rows:rows,changes:changes,adj:adj};
+}
+function renderPlan(rows,title,comment){
+ var stats=calcStats(rows),need={};planItems.forEach(function(p){need[p.name]={need:Number(p.qty)||0,prod:0}});rows.forEach(function(r){if(!need[r.product])need[r.product]={need:0,prod:0};need[r.product].prod+=Number(r.qty)||0});
+ var s='<div class="card"><h2>'+esc(title)+'</h2>';
+ if(comment)s+='<div class="hint"><b>反映したコメント</b><br>'+esc(comment)+'</div>';
+ stats.forEach(function(x){s+='<div class="item"><b>'+x.day+'曜日｜'+esc(x.line)+'</b><div class="small">実働可能 '+(x.available/60).toFixed(2)+'時間　計画 '+(x.used/60).toFixed(2)+'時間　残余 '+(x.left/60).toFixed(2)+'時間　段取り '+x.setups+'回</div></div>'});
+ rows.sort(function(a,b){var d=days.indexOf(a.day)-days.indexOf(b.day);if(d)return d;return a.line.localeCompare(b.line)}).forEach(function(r){s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+Math.round(r.qty).toLocaleString()+'個</div><div class="small">生産 '+(r.run/60).toFixed(2)+'時間　段取り '+(Number(r.setup)||0)+'分</div></div>'});
+ s+='<h3>需要との差</h3>';Object.keys(need).forEach(function(k){var v=need[k],dif=v.prod-v.need;s+='<div class="item"><b>'+esc(k)+'</b>　需要 '+v.need.toLocaleString()+'個　生産 '+Math.round(v.prod).toLocaleString()+'個　差 '+Math.round(dif).toLocaleString()+'個'+(dif>0?'　⚠余剰':'')+'</div>'});
+ return s+'</div>';
+}
+var rebuiltPlanResult=function(){
+ var base=distributeDemand('');window.__v31BaseRows=cloneRows(base.rows);window.__v31Warnings=base.warnings;
+ var s=renderPlan(base.rows,'今週の生産案');
+ var un=base.remain.filter(function(x){return x.remain>0});
+ if(un.length){s+='<div class="card" style="border:2px solid #dc2626"><b>⚠ 未計画</b>';un.forEach(function(x){s+='<div>'+esc(x.name)+'：'+Math.ceil(x.remain)+'個</div>'});s+='</div>'}else{s+='<div class="card"><div class="ok">需要を割り付けました。最低生産数量は倍数制約ではありません。</div></div>'}
+ s+='<div class="card" id="adjustmentPanel"><h2>最終調整</h2><div class="hint"><b>優先順位：</b>需要充足 → 稼働時間最大活用 → 余剰最小化 → 切替・段取り最小化 → 同一製品の連続生産</div><textarea id="adjustmentComment" placeholder="例：木曜日のaを増やして、bを金曜日にずらして"></textarea><button class="orange" id="applyAdjustment">コメントを反映して再計画</button><div id="adjustmentResult"></div></div><button class="gray" id="b">戻る</button></div>';
+ app.innerHTML=s;document.getElementById('b').onclick=planHome;document.getElementById('applyAdjustment').onclick=function(){var c=document.getElementById('adjustmentComment').value.trim(),r=document.getElementById('adjustmentResult');if(!c){r.innerHTML='<div class="small">コメントを入力してください。</div>';return}var before=cloneRows(window.__v31BaseRows||[]),res=applyReplan(before,c);var html=renderPlan(before,'変更前の計画')+renderPlan(res.rows,'変更後の計画',c);html+='<div class="card"><h3>再計画結果</h3>';html+=res.changes.length?res.changes.map(function(x){return '<div class="ok">'+esc(x)+'</div>'}).join(''):'<div class="warn">コメントから数量・曜日を変更できる条件を特定できませんでした。</div>';html+='<div class="hint">最低生産数量は倍数制約ではありません。再計画は需要充足・稼働時間・余剰・切替を比較して配置しています。</div></div>';r.innerHTML=html};
+};
+planResult=rebuiltPlanResult;
+})();
+
 home();
 </script></main></body></html>
