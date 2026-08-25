@@ -1,335 +1,325 @@
-<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v34（v30基準・対話型最終調整）</title>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI生産計画 v34（v30正式基準・対話型再計画）</title>
 <style>
-body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
-header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:21px;font-weight:800}
-main{max-width:850px;margin:auto;padding:12px}.card{background:#fff;border-radius:16px;padding:16px;margin:10px 0}
-.item,.day{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}
-.row,.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-button{display:block;width:100%;border:0;border-radius:11px;padding:14px;margin:8px 0;background:#2563eb;color:#fff;font-size:16px;font-weight:700}
-.green{background:#16a34a}.red{background:#dc2626}.gray{background:#e5e7eb;color:#111827}.orange{background:#ea580c}
-input,select,textarea{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}
-textarea{min-height:100px}label{display:block;font-size:13px;font-weight:700;margin:9px 0 4px}
-.hint{background:#f9fafb;border-radius:10px;padding:10px;font-size:12px;color:#4b5563}.small{font-size:12px;color:#6b7280}
-.total{font-weight:800;font-size:18px}.ok{background:#ecfdf5;color:#166534;padding:10px;border-radius:10px;font-size:13px}
-.warn{background:#fff7ed;color:#9a3412;padding:10px;border-radius:10px;font-size:13px}
+body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,sans-serif}header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:21px;font-weight:800}main{max-width:850px;margin:auto;padding:12px}.card{background:#fff;border-radius:16px;padding:16px;margin:10px 0}.item,.day{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:8px 0}.row,.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}button{display:block;width:100%;border:0;border-radius:11px;padding:14px;margin:8px 0;background:#2563eb;color:#fff;font-size:16px;font-weight:700}.green{background:#16a34a}.red{background:#dc2626}.gray{background:#e5e7eb;color:#111827}.orange{background:#ea580c}input{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}label{display:block;font-size:13px;font-weight:700;margin:9px 0 4px}.hint{background:#f9fafb;border-radius:10px;padding:10px;font-size:12px;color:#4b5563}.small{font-size:12px;color:#6b7280}.total{font-weight:800;font-size:18px}.ok{background:#ecfdf5;color:#166534;padding:10px;border-radius:10px;font-size:13px}
+
+#adjustmentComment{width:100%;min-height:90px;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:10px;font-size:16px;margin:8px 0 10px}
+#adjustmentPanel button{margin-top:4px}
 </style></head><body>
-<header><div class="title">AI生産計画 v33（v30基準・コメント解析修正版）</div>
-<div>需要充足・稼働時間活用・最低生産数量・切替最小化・コメント再計画</div></header>
-<main id="app"></main>
+<header><div class="title">AI生産計画 v34（v30正式基準）</div><div>v30の計画条件を基準に、自由な現場コメントを理解して再計画</div></header><main id="app"></main>
 <script>
 "use strict";
 var app=document.getElementById("app"),days=["月","火","水","木","金","土","日"];
-
-function read(k){try{var v=localStorage.getItem(k);return v?JSON.parse(v):null}catch(e){return null}}
-function arr(keys){for(var i=0;i<keys.length;i++){var v=read(keys[i]);if(Array.isArray(v))return v}return[]}
-function num(v){var x=Number(v);return isFinite(x)?x:0}
-function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
-function mins(t){var p=String(t||"").split(":");return p.length===2?num(p[0])*60+num(p[1]):0}
-function workMin(d){if(!d||d.enabled===false)return 0;var m=mins(d.end)-mins(d.start);if(m<0)m+=1440;return Math.max(0,m-num(d.breakMin))}
-function cloneRows(rows){return rows.map(function(r){var x={};Object.keys(r).forEach(function(k){x[k]=r[k]});return x})}
-
-var rawLines=arr(["aiSeisan_lines","aiSeisanV19_lines","aiSeisanV18_lines","aiSeisanV17_lines","aiSeisanV16_lines","aiSeisanV15_lines"]);
-var lines=[];rawLines.forEach(function(x){var n={name:String(x.name||x.lineName||""),capacity:num(x.capacity!=null?x.capacity:x.hourCapacity),lot:num(x.lot!=null?x.lot:x.minLot),workers:num(x.workers!=null?x.workers:x.personnel),standardStart:x.standardStart||x.start||"08:00",standardEnd:x.standardEnd||x.end||"17:00",standardBreak:num(x.standardBreak!=null?x.standardBreak:x.breakMin!=null?x.breakMin:60)};if(n.name&&!lines.some(function(y){return y.name===n.name}))lines.push(n)});
-var products=arr(["aiSeisan_products","aiSeisanV21_products","aiSeisanV20_products"]);
-var transitions=arr(["aiSeisan_transitionRules","aiSeisanV21_transitionRules","aiSeisanV20_transitionRules"]);
-var planItems=arr(["aiSeisan_planItems","aiSeisanV21_planItems"]);
-if(!planItems.length){planItems=arr(["aiSeisan_demands"]).map(function(x){return{name:String(x.name||x.product||x.productName||""),qty:num(x.qty!=null?x.qty:x.quantity!=null?x.quantity:x.demand)}}).filter(function(x){return x.name&&x.qty>0})}
+function parse(k){try{var r=localStorage.getItem(k);return r?JSON.parse(r):null}catch(e){return null}}
+function arr(keys){for(var i=0;i<keys.length;i++){var v=parse(keys[i]);if(Array.isArray(v))return v}return[]}
+function norm(x){x=x||{};return{name:String(x.name||x.lineName||""),capacity:+(x.capacity!=null?x.capacity:x.hourCapacity)||0,lot:+(x.lot!=null?x.lot:x.minLot)||0,workers:+(x.workers!=null?x.workers:x.personnel)||0,standardStart:x.standardStart||"08:00",standardEnd:x.standardEnd||"17:00",standardBreak:+(x.standardBreak!=null?x.standardBreak:60)}}
+var raw=arr(["aiSeisan_lines","aiSeisanV19_lines","aiSeisanV18_lines","aiSeisanV17_lines","aiSeisanV16_lines","aiSeisanV15_lines"]);
+var lines=[];raw.forEach(function(x){var n=norm(x);if(n.name&&!lines.some(function(y){return y.name===n.name}))lines.push(n)});
 var schedules=arr(["aiSeisan_schedules","aiSeisanV19_schedules","aiSeisanV18_schedules","aiSeisanV17_schedules"]);
+function save(){localStorage.setItem("aiSeisan_lines",JSON.stringify(lines));localStorage.setItem("aiSeisan_schedules",JSON.stringify(schedules));localStorage.setItem("aiSeisanV20_lines",JSON.stringify(lines));localStorage.setItem("aiSeisanV20_schedules",JSON.stringify(schedules))}
+function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
+function mins(t){var p=(t||"").split(":");return p.length==2?+p[0]*60+ +p[1]:0}
+function calc(d){if(!d.enabled)return 0;var n=mins(d.end)-mins(d.start);if(n<0)n+=1440;return Math.max(0,n-(+d.breakMin||0))}
+function defaults(l){return days.map(function(d){return{day:d,enabled:["月","火","水","木","金"].indexOf(d)>=0,start:l.standardStart,end:l.standardEnd,breakMin:l.standardBreak}})}
+function getSc(i){for(var j=0;j<schedules.length;j++)if(+schedules[j].lineId===i)return schedules[j];var x={lineId:i,days:defaults(lines[i])};schedules.push(x);save();return x}
+function hoursForDay(sc,d){if(!sc||!sc.days||!sc.days[d])return 0;return calc(sc.days[d])/60}
+save();
+function home(){app.innerHTML='<div class="card"><h2>マスター管理</h2><div class="ok">ライン：'+lines.length+'件</div><button id="l">ラインを登録・修正</button><button class="orange" id="w">曜日別稼働時間を設定</button></div><div class="card"><div class="hint">標準稼働時間を変更すると、曜日別稼働時間も標準値に更新されます。その後、曜日ごとに個別修正できます。</div></div>';document.getElementById("l").onclick=linesPage;document.getElementById("w").onclick=lineSelect}
+function linesPage(){var s='<div class="card"><h2>ライン登録・修正</h2><div class="hint">標準稼働時間を変更して保存すると、そのラインの曜日別設定を標準値へ更新します。</div>';lines.forEach(function(x,i){s+='<div class="item"><b>'+esc(x.name)+'</b><div class="small">能力 '+x.capacity+'個/h　最低ロット '+x.lot+'個　人員 '+x.workers+'人</div><div class="small">標準：'+x.standardStart+'〜'+x.standardEnd+'　休憩 '+x.standardBreak+'分</div><div class="actions"><button data-e="'+i+'">編集</button><button class="red" data-d="'+i+'">削除</button></div></div>'});s+='<button class="green" id="n">＋新規登録</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.getElementById("n").onclick=function(){editLine(-1)};document.getElementById("b").onclick=home;document.querySelectorAll("[data-e]").forEach(function(b){b.onclick=function(){editLine(+this.dataset.e)}});document.querySelectorAll("[data-d]").forEach(function(b){b.onclick=function(){var i=+this.dataset.d;if(confirm("削除しますか？")){lines.splice(i,1);schedules=schedules.filter(function(x){return +x.lineId!==i});save();linesPage()}}})}
+function editLine(i){var x=i>=0?lines[i]:{standardStart:"08:00",standardEnd:"17:00",standardBreak:60};app.innerHTML='<div class="card"><h2>ライン'+(i<0?"新規登録":"編集")+'</h2><label>ライン名<input id="n" value="'+esc(x.name)+'"></label><label>標準1時間能力（個）<input id="c" type="number" value="'+x.capacity+'"></label><label>標準最低ロット（個）<input id="l" type="number" value="'+x.lot+'"></label><label>必要人員（人）<input id="w" type="number" value="'+x.workers+'"></label><h3>標準稼働時間</h3><div class="row"><div><label>標準開始</label><input id="st" type="time" value="'+x.standardStart+'"></div><div><label>標準終了</label><input id="ed" type="time" value="'+x.standardEnd+'"></div></div><label>標準休憩（分）<input id="br" type="number" value="'+x.standardBreak+'"></label><div class="hint">保存すると、既存の曜日別設定もこの標準値に更新されます。</div><button class="green" id="s">保存</button><button class="gray" id="b">キャンセル</button></div>';document.getElementById("s").onclick=function(){var n=document.getElementById("n").value.trim();if(!n){alert("ライン名を入力してください");return}var o={name:n,capacity:+document.getElementById("c").value||0,lot:+document.getElementById("l").value||0,workers:+document.getElementById("w").value||0,standardStart:document.getElementById("st").value||"08:00",standardEnd:document.getElementById("ed").value||"17:00",standardBreak:+document.getElementById("br").value||0};if(i<0)lines.push(o);else{lines[i]=o;schedules.forEach(function(sc){if(+sc.lineId===i)sc.days=defaults(o)})}save();linesPage()};document.getElementById("b").onclick=linesPage}
+function lineSelect(){if(!lines.length){alert("先にラインを登録してください。");return}var s='<div class="card"><h2>曜日別稼働時間</h2>';lines.forEach(function(x,i){s+='<button data-i="'+i+'">'+esc(x.name)+' を設定</button>'});s+='<button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.querySelectorAll("[data-i]").forEach(function(b){b.onclick=function(){scheduleEdit(+this.dataset.i)}});document.getElementById("b").onclick=home}
+function scheduleEdit(i){var sc=getSc(i),s='<div class="card"><h2>'+esc(lines[i].name)+' の稼働設定</h2>';sc.days.forEach(function(d,j){s+='<div class="day"><b>'+d.day+'曜日</b><label><input type="checkbox" data-en="'+j+'" style="width:auto" '+(d.enabled?"checked":"")+'> 稼働する</label><div class="row"><div><label>開始</label><input type="time" data-st="'+j+'" value="'+d.start+'"></div><div><label>終了</label><input type="time" data-ed="'+j+'" value="'+d.end+'"></div></div><label>休憩（分）</label><input type="number" data-br="'+j+'" value="'+d.breakMin+'"><div class="small" data-t="'+j+'">実働：'+(calc(d)/60).toFixed(2)+'時間</div></div>'});s+='<div class="total" id="sum">週間実働：'+(sc.days.reduce(function(a,d){return a+calc(d)},0)/60).toFixed(2)+'時間</div><button class="green" id="s">保存</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;function refresh(){var t=0;sc.days.forEach(function(d,j){d.enabled=document.querySelector('[data-en="'+j+'"]').checked;d.start=document.querySelector('[data-st="'+j+'"]').value;d.end=document.querySelector('[data-ed="'+j+'"]').value;d.breakMin=+document.querySelector('[data-br="'+j+'"]').value||0;document.querySelector('[data-t="'+j+'"]').textContent="実働："+(calc(d)/60).toFixed(2)+"時間";t+=calc(d)});document.getElementById("sum").textContent="週間実働："+(t/60).toFixed(2)+"時間"}app.querySelectorAll("input").forEach(function(x){x.oninput=refresh;x.onchange=refresh});document.getElementById("s").onclick=function(){refresh();save();lineSelect()};document.getElementById("b").onclick=lineSelect}
 
-function saveAll(){
- localStorage.setItem("aiSeisan_lines",JSON.stringify(lines));
- localStorage.setItem("aiSeisan_schedules",JSON.stringify(schedules));
- localStorage.setItem("aiSeisan_products",JSON.stringify(products));
- localStorage.setItem("aiSeisan_transitionRules",JSON.stringify(transitions));
+/* v22: 製品能力・最低ロット・原料/製品切替段取りを考慮した生産計画 */
+var productMaster=arr(["aiSeisan_products","aiSeisanV21_products","aiSeisanV20_products"]);
+var transitionRules=arr(["aiSeisan_transitionRules","aiSeisanV21_transitionRules","aiSeisanV20_transitionRules"]);
+var planItems=arr(["aiSeisan_planItems","aiSeisanV21_planItems"]);
+
+function saveV22(){
+ localStorage.setItem("aiSeisan_products",JSON.stringify(productMaster));
+ localStorage.setItem("aiSeisan_transitionRules",JSON.stringify(transitionRules));
  localStorage.setItem("aiSeisan_planItems",JSON.stringify(planItems));
- localStorage.setItem("aiSeisanV20_lines",JSON.stringify(lines));
- localStorage.setItem("aiSeisanV20_schedules",JSON.stringify(schedules));
- localStorage.setItem("aiSeisanV20_products",JSON.stringify(products));
- localStorage.setItem("aiSeisanV21_products",JSON.stringify(products));
- localStorage.setItem("aiSeisanV20_transitionRules",JSON.stringify(transitions));
- localStorage.setItem("aiSeisanV21_transitionRules",JSON.stringify(transitions));
- localStorage.setItem("aiSeisanV21_planItems",JSON.stringify(planItems));
+ save();
 }
-function defaults(line){return days.map(function(d){return{day:d,enabled:["月","火","水","木","金"].indexOf(d)>=0,start:line.standardStart,end:line.standardEnd,breakMin:line.standardBreak}})}
-function getSc(i){var s=schedules.find(function(x){return num(x.lineId)===i});if(!s){s={lineId:i,days:defaults(lines[i])};schedules.push(s);saveAll()}return s}
-function hoursForDay(sc,d){return sc&&sc.days&&sc.days[d]?workMin(sc.days[d])/60:0}
-function findProduct(name){return products.find(function(p){return String(p.name)===String(name)})||null}
-function capacity(line,p){return num(p&&p.capacityOverride)>0?num(p.capacityOverride):num(line&&line.capacity)}
-function minLot(line,p){return num(p&&p.minLotOverride)>0?num(p.minLotOverride):num(line&&line.lot)}
-function transition(lineName,from,to){if(!from||from===to)return{time:0,impossible:false};var r=transitions.find(function(x){return(!x.line||x.line===lineName)&&x.from===from&&x.to===to});return r?{time:num(r.time),impossible:!!r.impossible}:{time:0,impossible:false}}
-
-function home(){
- app.innerHTML='<div class="card"><h2>マスター管理</h2><div class="ok">ライン：'+lines.length+'件　製品：'+products.length+'件　需要：'+planItems.length+'件</div>'+
- '<button id="lp">ライン設定</button><button id="sp" class="orange">曜日別稼働時間</button><button id="pp">製品設定</button><button id="tp" class="orange">切替・段取り設定</button><button id="dp" class="green">今週の需要</button><button id="make" class="orange">生産計画を作成</button></div>';
- document.getElementById("lp").onclick=linePage;document.getElementById("sp").onclick=lineSelect;document.getElementById("pp").onclick=productPage;document.getElementById("tp").onclick=transitionPage;document.getElementById("dp").onclick=demandPage;document.getElementById("make").onclick=planResult;
+function findProduct(name){
+ for(var i=0;i<productMaster.length;i++) if(productMaster[i].name===name) return productMaster[i];
+ return null;
 }
-function linePage(){
- var s='<div class="card"><h2>ライン設定</h2>';lines.forEach(function(l,i){s+='<div class="item"><b>'+esc(l.name)+'</b><div class="small">能力 '+l.capacity+'個/h　最低生産数量 '+l.lot+'個　人員 '+l.workers+'人　標準 '+l.standardStart+'〜'+l.standardEnd+'</div><button data-e="'+i+'">編集</button></div>'});s+='<button class="green" id="new">＋新規登録</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.getElementById("new").onclick=function(){editLine(-1)};document.getElementById("b").onclick=home;document.querySelectorAll("[data-e]").forEach(function(b){b.onclick=function(){editLine(+b.dataset.e)}})
+function productFor(name){
+ var p=findProduct(name);
+ return p||{name:name,raw:"",capacityOverride:0,minLotOverride:0};
 }
-function editLine(i){
- var l=i>=0?lines[i]:{name:"",capacity:0,lot:0,workers:0,standardStart:"08:00",standardEnd:"17:00",standardBreak:60};
- app.innerHTML='<div class="card"><h2>ライン設定</h2><label>ライン名<input id="n" value="'+esc(l.name)+'"></label><label>能力（個/h）<input id="c" type="number" value="'+l.capacity+'"></label><label>最低生産数量<input id="lot" type="number" value="'+l.lot+'"></label><label>必要人員<input id="w" type="number" value="'+l.workers+'"></label><div class="row"><div><label>開始</label><input id="st" type="time" value="'+l.standardStart+'"></div><div><label>終了</label><input id="ed" type="time" value="'+l.standardEnd+'"></div></div><label>休憩（分）<input id="br" type="number" value="'+l.standardBreak+'"></label><button class="green" id="s">保存</button><button class="gray" id="b">戻る</button></div>';
- document.getElementById("s").onclick=function(){var o={name:document.getElementById("n").value.trim(),capacity:num(document.getElementById("c").value),lot:num(document.getElementById("lot").value),workers:num(document.getElementById("w").value),standardStart:document.getElementById("st").value||"08:00",standardEnd:document.getElementById("ed").value||"17:00",standardBreak:num(document.getElementById("br").value)};if(!o.name){alert("ライン名を入力してください");return}if(i<0)lines.push(o);else{lines[i]=o;var sc=getSc(i);sc.days=defaults(o)}saveAll();linePage()};document.getElementById("b").onclick=linePage
+function effectiveCapacity(line,p){
+ return Number(p.capacityOverride)>0?Number(p.capacityOverride):Number(line.capacity)||0;
 }
-function lineSelect(){if(!lines.length){alert("先にラインを登録してください");return}var s='<div class="card"><h2>曜日別稼働時間</h2>';lines.forEach(function(l,i){s+='<button data-i="'+i+'">'+esc(l.name)+' を設定</button>'});s+='<button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.querySelectorAll("[data-i]").forEach(function(b){b.onclick=function(){scheduleEdit(+b.dataset.i)}});document.getElementById("b").onclick=home}
-function scheduleEdit(i){
- var sc=getSc(i),s='<div class="card"><h2>'+esc(lines[i].name)+' の曜日別稼働</h2>';sc.days.forEach(function(d,j){s+='<div class="day"><b>'+d.day+'曜日</b><label><input type="checkbox" data-en="'+j+'" '+(d.enabled?"checked":"")+'> 稼働する</label><div class="row"><div><label>開始</label><input type="time" data-st="'+j+'" value="'+d.start+'"></div><div><label>終了</label><input type="time" data-ed="'+j+'" value="'+d.end+'"></div></div><label>休憩（分）</label><input type="number" data-br="'+j+'" value="'+d.breakMin+'"><div class="small" data-t="'+j+'">実働 '+(workMin(d)/60).toFixed(2)+'時間</div></div>'});s+='<div class="total" id="sum">週間実働 '+(sc.days.reduce(function(a,d){return a+workMin(d)},0)/60).toFixed(2)+'時間</div><button class="green" id="s">保存</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;
- function refresh(){var t=0;sc.days.forEach(function(d,j){d.enabled=document.querySelector('[data-en="'+j+'"]').checked;d.start=document.querySelector('[data-st="'+j+'"]').value;d.end=document.querySelector('[data-ed="'+j+'"]').value;d.breakMin=num(document.querySelector('[data-br="'+j+'"]').value);document.querySelector('[data-t="'+j+'"]').textContent='実働 '+(workMin(d)/60).toFixed(2)+'時間';t+=workMin(d)});document.getElementById("sum").textContent='週間実働 '+(t/60).toFixed(2)+'時間'}
- app.querySelectorAll("input").forEach(function(x){x.oninput=refresh;x.onchange=refresh});document.getElementById("s").onclick=function(){refresh();saveAll();lineSelect()};document.getElementById("b").onclick=lineSelect
+function effectiveLot(line,p){
+ return Number(p.minLotOverride)>0?Number(p.minLotOverride):Number(line.lot)||0;
 }
-function productPage(){
- var s='<div class="card"><h2>製品設定</h2><div class="hint">最低生産数量は倍数ではありません。必要数量が最低生産数量未満でも、能力が許せば最低数量まで作り余剰として表示します。</div>';products.forEach(function(p,i){s+='<div class="item"><b>'+esc(p.name)+'</b><div class="small">原料：'+esc(p.raw||"未設定")+'　能力：'+(num(p.capacityOverride)||"ライン標準")+'　最低生産数量：'+(num(p.minLotOverride)||"ライン標準")+'</div><div class="actions"><button data-e="'+i+'">編集</button><button class="red" data-d="'+i+'">削除</button></div></div>'});s+='<button class="green" id="new">＋製品追加</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.getElementById("new").onclick=function(){editProduct(-1)};document.getElementById("b").onclick=home;document.querySelectorAll("[data-e]").forEach(function(b){b.onclick=function(){editProduct(+b.dataset.e)}});document.querySelectorAll("[data-d]").forEach(function(b){b.onclick=function(){var i=+b.dataset.d;if(confirm("削除しますか？")){products.splice(i,1);saveAll();productPage()}}})
+function transition(lineName,fromName,toName){
+ if(!fromName || fromName===toName) return {time:0,impossible:false};
+ for(var i=0;i<transitionRules.length;i++){
+   var r=transitionRules[i];
+   if((!r.line || r.line===lineName) && r.from===fromName && r.to===toName)
+     return {time:Number(r.time)||0,impossible:!!r.impossible};
+ }
+ return {time:0,impossible:false};
 }
-function editProduct(i){
- var p=i>=0?products[i]:{name:"",raw:"",capacityOverride:0,minLotOverride:0};app.innerHTML='<div class="card"><h2>製品設定</h2><label>製品名<input id="n" value="'+esc(p.name)+'"></label><label>原料<input id="r" value="'+esc(p.raw||"")+'"></label><label>製品別能力（個/h）<input id="c" type="number" value="'+(num(p.capacityOverride)||"")+'"></label><label>製品別最低生産数量<input id="l" type="number" value="'+(num(p.minLotOverride)||"")+'"></label><button class="green" id="s">保存</button><button class="gray" id="b">戻る</button></div>';document.getElementById("s").onclick=function(){var o={name:document.getElementById("n").value.trim(),raw:document.getElementById("r").value.trim(),capacityOverride:num(document.getElementById("c").value),minLotOverride:num(document.getElementById("l").value)};if(!o.name){alert("製品名を入力してください");return}if(i<0)products.push(o);else products[i]=o;saveAll();productPage()};document.getElementById("b").onclick=productPage
+function productMasterPage(){
+ var s='<div class="card"><h2>製品設定</h2><div class="hint">製品ごとの1時間能力・最低ロットを個別修正できます。未設定ならライン標準値を使います。</div>';
+ if(!productMaster.length)s+='<div class="hint">製品別設定はまだありません。</div>';
+ productMaster.forEach(function(p,i){
+   s+='<div class="item"><b>'+esc(p.name)+'</b><div class="small">原料：'+esc(p.raw||"未設定")+'　能力：'+(p.capacityOverride||"ライン標準")+'　最低ロット：'+(p.minLotOverride||"ライン標準")+'</div><div class="actions"><button data-pe="'+i+'">編集</button><button class="red" data-pd="'+i+'">削除</button></div></div>';
+ });
+ s+='<button class="green" id="n">＋製品設定</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;
+ document.getElementById("n").onclick=function(){productEdit(-1)};document.getElementById("b").onclick=home;
+ document.querySelectorAll("[data-pe]").forEach(function(b){b.onclick=function(){productEdit(+this.dataset.pe)}});
+ document.querySelectorAll("[data-pd]").forEach(function(b){b.onclick=function(){var i=+this.dataset.pd;if(confirm("削除しますか？")){productMaster.splice(i,1);saveV22();productMasterPage()}}});
+}
+function productEdit(i){
+ var p=i>=0?productMaster[i]:{name:"",raw:"",capacityOverride:0,minLotOverride:0};
+ app.innerHTML='<div class="card"><h2>製品設定'+(i<0?"登録":"編集")+'</h2>'+
+ '<label>製品名<input id="n" value="'+esc(p.name)+'"></label>'+
+ '<label>使用原料<input id="r" value="'+esc(p.raw||"")+'" placeholder="例：A原料"></label>'+
+ '<label>製品別1時間能力（個）<input id="c" type="number" min="0" value="'+(p.capacityOverride||"")+'" placeholder="空欄ならライン標準"></label>'+
+ '<label>製品別最低ロット（個）<input id="l" type="number" min="0" value="'+(p.minLotOverride||"")+'" placeholder="空欄ならライン標準"></label>'+
+ '<button class="green" id="s">保存</button><button class="gray" id="b">キャンセル</button></div>';
+ document.getElementById("s").onclick=function(){
+  var n=document.getElementById("n").value.trim();if(!n){alert("製品名を入力してください");return}
+  var o={name:n,raw:document.getElementById("r").value.trim(),capacityOverride:+document.getElementById("c").value||0,minLotOverride:+document.getElementById("l").value||0};
+  if(i<0)productMaster.push(o);else productMaster[i]=o;saveV22();productMasterPage();
+ };
+ document.getElementById("b").onclick=productMasterPage;
 }
 function transitionPage(){
- var s='<div class="card"><h2>切替・段取り設定</h2><div class="hint">未登録の切替は段取り0分として扱います。</div>';transitions.forEach(function(t,i){s+='<div class="item"><b>'+esc(t.line||"全ライン")+'</b><div>'+esc(t.from||"")+" → "+esc(t.to||"")+'：'+num(t.time)+'分'+(t.impossible?"（不可）":"")+'</div><button class="red" data-d="'+i+'">削除</button></div>'});s+='<label>ライン<input id="ln" placeholder="空欄=全ライン"></label><div class="row"><div><label>変更前</label><input id="fr"></div><div><label>変更後</label><input id="to"></div></div><label>段取り時間（分）<input id="tm" type="number" value="0"></label><label><input id="im" type="checkbox"> 切替不可</label><button class="green" id="add">追加</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.getElementById("b").onclick=home;document.getElementById("add").onclick=function(){transitions.push({line:document.getElementById("ln").value.trim(),from:document.getElementById("fr").value.trim(),to:document.getElementById("to").value.trim(),time:num(document.getElementById("tm").value),impossible:document.getElementById("im").checked});saveAll();transitionPage()};document.querySelectorAll("[data-d]").forEach(function(b){b.onclick=function(){transitions.splice(+b.dataset.d,1);saveAll();transitionPage()}})
+ var s='<div class="card"><h2>切替・段取りルール</h2><div class="hint">原料切替だけでなく、同じ原料でも製品変更時の包装資材交換などを「製品→製品」の切替として設定できます。impossible は「その順番では生産不可」です。</div>';
+ transitionRules.forEach(function(r,i){
+  s+='<div class="item"><b>'+esc(r.line||"全ライン")+'</b><div>'+esc(r.from)+' → '+esc(r.to)+'</div><div class="small">'+(r.impossible?"不可能":(Number(r.time)||0)+"分")+'</div><div class="actions"><button data-te="'+i+'">編集</button><button class="red" data-td="'+i+'">削除</button></div></div>';
+ });
+ s+='<button class="green" id="n">＋切替ルール登録</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;
+ document.getElementById("n").onclick=function(){transitionEdit(-1)};document.getElementById("b").onclick=home;
+ document.querySelectorAll("[data-te]").forEach(function(b){b.onclick=function(){transitionEdit(+this.dataset.te)}});
+ document.querySelectorAll("[data-td]").forEach(function(b){b.onclick=function(){var i=+this.dataset.td;if(confirm("削除しますか？")){transitionRules.splice(i,1);saveV22();transitionPage()}}});
 }
-function demandPage(){
- var s='<div class="card"><h2>今週の需要</h2>';planItems.forEach(function(p,i){s+='<div class="item"><b>'+esc(p.name)+'</b><label>必要数量<input type="number" data-q="'+i+'" value="'+num(p.qty)+'"></label><button class="red" data-d="'+i+'">削除</button></div>'});s+='<div class="item"><label>製品<select id="pn">'+products.map(function(p){return '<option value="'+esc(p.name)+'">'+esc(p.name)+'</option>'}).join("")+'</select></label><label>数量<input id="pq" type="number" value="0"></label><button class="green" id="add">需要を追加</button></div><button class="green" id="s">保存</button><button class="gray" id="b">戻る</button></div>';app.innerHTML=s;document.getElementById("add").onclick=function(){var n=document.getElementById("pn").value,q=num(document.getElementById("pq").value);if(!n||q<=0)return;planItems.push({name:n,qty:q});saveAll();demandPage()};document.getElementById("s").onclick=function(){planItems.forEach(function(p,i){p.qty=num(document.querySelector('[data-q="'+i+'"]').value)});saveAll();demandPage()};document.getElementById("b").onclick=home;document.querySelectorAll("[data-d]").forEach(function(b){b.onclick=function(){planItems.splice(+b.dataset.d,1);saveAll();demandPage()}})
+function transitionEdit(i){
+ var r=i>=0?transitionRules[i]:{line:"",from:"",to:"",time:0,impossible:false};
+ app.innerHTML='<div class="card"><h2>切替ルール'+(i<0?"登録":"編集")+'</h2>'+
+ '<label>ライン名（空欄＝全ライン）<input id="l" value="'+esc(r.line||"")+'"></label>'+
+ '<label>切替前の製品名<input id="f" value="'+esc(r.from||"")+'"></label>'+
+ '<label>切替後の製品名<input id="t" value="'+esc(r.to||"")+'"></label>'+
+ '<label>段取り時間（分）<input id="m" type="number" min="0" value="'+(r.time||0)+'"></label>'+
+ '<label><input id="im" type="checkbox" style="width:auto" '+(r.impossible?"checked":"")+'> この順番は不可能</label>'+
+ '<button class="green" id="s">保存</button><button class="gray" id="b">キャンセル</button></div>';
+ document.getElementById("s").onclick=function(){
+  var o={line:document.getElementById("l").value.trim(),from:document.getElementById("f").value.trim(),to:document.getElementById("t").value.trim(),time:+document.getElementById("m").value||0,impossible:document.getElementById("im").checked};
+  if(!o.from||!o.to){alert("切替前後の製品名を入力してください");return}
+  if(i<0)transitionRules.push(o);else transitionRules[i]=o;saveV22();transitionPage();
+ };
+ document.getElementById("b").onclick=transitionPage;
 }
-
+function planHome(){
+ var s='<div class="card"><h2>今週の生産計画</h2><div class="hint">必要数量を入力し、登録済みのライン能力・曜日別稼働時間・最低ロット・製品切替段取りを考慮して計画案を作成します。</div>';
+ if(!planItems.length)s+='<div class="hint">まだ需要が登録されていません。</div>';
+ planItems.forEach(function(p,i){s+='<div class="item"><b>'+esc(p.name)+'</b><div class="small">必要数量：'+p.qty+'個</div><div class="actions"><button data-pe="'+i+'">編集</button><button class="red" data-pd="'+i+'">削除</button></div></div>'});
+ s+='<button class="green" id="pn">＋今週の需要を登録</button>';
+ if(planItems.length)s+='<button class="orange" id="calc">段取りを考慮して生産案を作成</button>';
+ s+='<button class="gray" id="back">戻る</button></div>';
+ s+='<div class="card"><div class="hint"><b>最低ロットの考え方</b><br>最低ロットは「最低生産数量」です。最低ロットを超えた数量は倍数にそろえません。需要を複数日に分けた結果、最終日の数量が最低ロット未満になる場合は、最低ロットまで生産した案と余剰数量を表示します。</div></div>';
+ app.innerHTML=s;
+ document.getElementById("pn").onclick=function(){planEdit(-1)};
+ document.getElementById("back").onclick=home;
+ if(document.getElementById("calc"))document.getElementById("calc").onclick=planResult;
+ document.querySelectorAll("[data-pe]").forEach(function(b){b.onclick=function(){planEdit(+b.dataset.pe)}});
+ document.querySelectorAll("[data-pd]").forEach(function(b){b.onclick=function(){if(confirm("削除しますか？")){planItems.splice(+b.dataset.pd,1);saveV22();planHome()}}});
+}
+function planEdit(i){
+ var p=i>=0?planItems[i]:{name:"",qty:0};
+ var opts='<option value="">製品を選択してください</option>';
+ productMaster.forEach(function(x){opts+='<option value="'+esc(x.name)+'" '+(x.name===p.name?'selected':'')+'>'+esc(x.name)+(x.raw?'（原料：'+esc(x.raw)+'）':'')+'</option>'});
+ app.innerHTML='<div class="card"><h2>今週の需要'+(i<0?"登録":"編集")+'</h2>'+
+ '<label>商品名<select id="pn" style="width:100%;box-sizing:border-box;padding:11px;border:1px solid #d1d5db;border-radius:10px;font-size:16px">'+opts+'</select></label>'+
+ '<div class="hint">製品設定に登録済みの商品から選択できます。登録がない場合は「製品設定」から先に登録してください。</div>'+
+ '<label>今週必要数量（個）<input id="pq" type="number" min="1" value="'+(p.qty||"")+'"></label>'+
+ '<button class="green" id="ps">保存</button><button class="gray" id="pb">キャンセル</button></div>';
+ document.getElementById("ps").onclick=function(){var n=document.getElementById("pn").value.trim(),q=+document.getElementById("pq").value||0;if(!n||q<=0){alert("製品を選択し、必要数量を入力してください");return}var o={name:n,qty:q};if(i<0)planItems.push(o);else planItems[i]=o;saveV22();planHome()};document.getElementById("pb").onclick=planHome;
+}
 function normalizeComment(txt){
- return String(txt||"").replace(/[　]/g," ").replace(/[，]/g,",").replace(/[．]/g,".").replace(/[！]/g,"!").replace(/[？]/g,"?").replace(/\s+/g," ").trim();
+ return String(txt||'').replace(/[　]/g,' ').replace(/[，]/g,',').replace(/[．]/g,'.').replace(/[！]/g,'!').replace(/[？]/g,'?').replace(/\s+/g,' ').trim();
 }
+function dayFromText(t){
+ var m=String(t||'').match(/([月火水木金土日])(?:曜日)?/);return m?m[1]:null;
+}
+function mentionedDays(t){var out=[];days.forEach(function(d){if(new RegExp(d+'(?:曜日)?').test(t)&&out.indexOf(d)<0)out.push(d)});return out;}
+function productNames(){return planItems.map(function(p){return String(p.name||'')}).filter(Boolean).sort(function(a,b){return b.length-a.length});}
+function mentionedProducts(t){var ps=productNames();return ps.filter(function(p){return t.indexOf(p)>=0});}
+function cleanProduct(s){return String(s||'').replace(/^\s*(?:の|を|は|が)\s*/,'').trim();}
 function parseAdjustmentComment(txt){
- var t=normalizeComment(txt),blockedDays=[],moves=[],increase=[],decrease=[],preferred={},surplusTarget="";
- var intents=[],goals=[],questions=[];
- var dayPat="月火水木金土日",m;
- function addIntent(type,data,reason){intents.push({type:type,data:data||{},reason:reason||""})}
- function dayOf(x){var z=String(x||"").match(/([月火水木金土日])曜日?/);return z?z[1]:null}
- function productOf(x){var z=String(x||"").trim().replace(/^(?:の|を|は)\s*/,"");return z}
- var blockRe=new RegExp("(["+dayPat+"])曜日?[^,。]*?(?:生産しない|生産なし|生産を止める|止める|停止|休止)","g");
- while((m=blockRe.exec(t))){if(blockedDays.indexOf(m[1])<0)blockedDays.push(m[1]);addIntent("blockDay",{day:m[1]},"指定曜日の生産停止");}
- var incRe=new RegExp("(["+dayPat+"])曜日?の([^、,。]+?)(?:を|は)\\s*(?:(\\d[\\d,]*)\\s*個?\\s*)?(?:増やす|増やして|増加|増産|増量|増)","g");
- while((m=incRe.exec(t))) {var q=m[3]?num(m[3].replace(/,/g,"")):0;increase.push({day:m[1],product:m[2].trim(),qty:q});addIntent("increase",{day:m[1],product:m[2].trim(),qty:q},"指定製品を増やす");}
- var decRe=new RegExp("(["+dayPat+"])曜日?の([^、,。]+?)(?:を|は)\\s*(?:(\\d[\\d,]*)\\s*個?\\s*)?(?:減らす|減らして|減少|減産|減量|減)","g");
- while((m=decRe.exec(t))) {var q2=m[3]?num(m[3].replace(/,/g,"")):0;decrease.push({day:m[1],product:m[2].trim(),qty:q2});addIntent("decrease",{day:m[1],product:m[2].trim(),qty:q2},"指定製品を減らす");}
- var moveRe=new RegExp("(["+dayPat+"])曜日?の([^、,。]+?)(?:を|は)\\s*([" + dayPat + "])曜日?(?:に|へ)\\s*(?:回す|回して|移す|移して|ずらす|ずらして|まとめる|まとめて|寄せる|寄せて)","g");
- while((m=moveRe.exec(t))){moves.push({fromDay:m[1],product:m[2].trim(),toDay:m[3]});addIntent("move",{fromDay:m[1],product:m[2].trim(),toDay:m[3]},"指定曜日へ移動");}
- var prefRe=new RegExp("([^、,。 ]+?)(?:を|は)\\s*([" + dayPat + "])曜日?(?:に|へ)(?:回す|回して|移す|移して|ずらす|ずらして|まとめる|まとめて|寄せる|寄せて)","g");
- while((m=prefRe.exec(t))) {preferred[m[1]]=m[2];addIntent("preferDay",{product:m[1],toDay:m[2]},"製品を指定曜日へ寄せる");}
-
- /* 自然な現場表現を「意図」として解釈する。固定文型に一致しなくても、できるだけ再計画条件へ変換する。 */
- var d1=t.match(/(["+dayPat+"])曜日?/),d2=t.match(/(?:["]+)(["+dayPat+"])曜日?/);
- if(/余裕|空いて|暇|空き|余力/.test(t)){
-   goals.push("unused_capacity"); addIntent("maximizeCapacity",{},"空いている時間をできるだけ活用");
+ var t=normalizeComment(txt), blocked=[],preferred={},increase=[],decrease=[],moves=[],intents=[],goals=[],questions=[],notes=[];
+ function add(type,data,reason,confidence){intents.push({type:type,data:data||{},reason:reason||'',confidence:confidence==null?0.8:confidence});}
+ var ps=mentionedProducts(t), ds=mentionedDays(t);
+ // 明示的な曜日停止
+ var m,re=/(月|火|水|木|金|土|日)(?:曜日)?[^。]*?(?:生産しない|生産なし|生産を止める|止める|停止|休止|空ける)/g;
+ while((m=re.exec(t))){if(blocked.indexOf(m[1])<0)blocked.push(m[1]);add('blockDay',{day:m[1]},m[1]+'曜日を空ける',0.98)}
+ // 明示的な「曜日の製品を増減」。文末が「増やして、金曜のbを減らして」のような並列にも対応
+ re=/(月|火|水|木|金|土|日)(?:曜日)?\s*(?:の)?\s*([^、,。]+?)\s*(?:を|は|が)\s*(?:(\d[\d,]*)\s*個\s*)?(?:増やす|増やして|増加|増産|増量|増)/g;
+ while((m=re.exec(t))){var p1=cleanProduct(m[2]),q1=m[3]?num(m[3].replace(/,/g,'')):0;if(ps.indexOf(p1)<0){var hit=ps.find(function(p){return p1.indexOf(p)>=0||p.indexOf(p1)>=0});if(hit)p1=hit}if(p1){increase.push({day:m[1],product:p1,qty:q1});add('increase',{day:m[1],product:p1,qty:q1},m[1]+'曜日の'+p1+'を増やす',0.99)}}
+ re=/(月|火|水|木|金|土|日)(?:曜日)?\s*(?:の)?\s*([^、,。]+?)\s*(?:を|は|が)\s*(?:(\d[\d,]*)\s*個\s*)?(?:減らす|減らして|減少|減産|減量|減)/g;
+ while((m=re.exec(t))){var p2=cleanProduct(m[2]),q2=m[3]?num(m[3].replace(/,/g,'')):0;if(ps.indexOf(p2)<0){var hit2=ps.find(function(p){return p2.indexOf(p)>=0||p.indexOf(p2)>=0});if(hit2)p2=hit2}if(p2){decrease.push({day:m[1],product:p2,qty:q2});add('decrease',{day:m[1],product:p2,qty:q2},m[1]+'曜日の'+p2+'を減らす',0.99)}}
+ // 曜日間移動：「木曜のaを金曜に」「aを木曜から金曜へ」
+ re=/(月|火|水|木|金|土|日)(?:曜日)?\s*(?:の)?\s*([^、,。]+?)\s*(?:を|は)\s*(?:(\d[\d,]*)\s*個\s*)?(?:((?:月|火|水|木|金|土|日)(?:曜日)?))\s*(?:に|へ)\s*(?:回す|移す|ずらす|寄せる|まとめる)/g;
+ while((m=re.exec(t))){var pp=cleanProduct(m[2]),to=dayFromText(m[4]);var hitp=ps.find(function(p){return pp===p||pp.indexOf(p)>=0||p.indexOf(pp)>=0});if(hitp)pp=hitp;if(pp&&to){var from=m[1],qq=m[3]?num(m[3].replace(/,/g,'')):0;moves.push({fromDay:from,toDay:to,product:pp,qty:qq});add('move',{fromDay:from,toDay:to,product:pp,qty:qq},pp+'を'+from+'曜日から'+to+'曜日へ移動',0.99)}}
+ // 製品を曜日へ寄せる。「aは木曜に寄せたい」「bを金曜にまとめたい」
+ re=/(?:^|[、,。\s])([^、,。\s]+?)\s*(?:を|は)\s*(月|火|水|木|金|土|日)(?:曜日)?\s*(?:に|へ)\s*(?:寄せ|集中|まとめ|回す|移す|ずらす)/g;
+ while((m=re.exec(t))){var pp2=cleanProduct(m[1]),to2=m[2],hp=ps.find(function(p){return pp2===p||pp2.indexOf(p)>=0||p.indexOf(pp2)>=0});if(hp){preferred[hp]=to2;add('preferDay',{product:hp,toDay:to2},hp+'を'+to2+'曜日へ寄せる',0.96)}}
+ // 典型的な自然言語：「金曜が空いているので木曜に寄せたい」
+ var pair=t.match(/(月|火|水|木|金|土|日)(?:曜日)?[^。]*?(?:余裕|空いて|暇|空き|余力|余る)[^。]*?(?:ので|だから|ため|から)[^。]*?(月|火|水|木|金|土|日)(?:曜日)?[^。]*?(?:寄せ|集中|前倒し|移|回)/);
+ if(pair){var fromDay=pair[1],toDay=pair[2];add('shiftCapacity',{fromDay:fromDay,toDay:toDay},fromDay+'曜日の余力を使って'+toDay+'曜日へ生産を寄せる',0.9);goals.push('shiftCapacity')}
+ // 「木曜をなるべくフル稼働」「金曜は少し余裕を残す」
+ re=/(月|火|水|木|金|土|日)(?:曜日)?[^。]*?(?:フル稼働|最大限使|できるだけ使|なるべく使|稼働率を上げ|埋めたい)/g;
+ while((m=re.exec(t))){add('fillDay',{day:m[1]},m[1]+'曜日の稼働時間をできるだけ活用',0.92);goals.push('fillDay')}
+ re=/(月|火|水|木|金|土|日)(?:曜日)?[^。、,]*?(?:余裕を残|空け|空けて|詰めすぎない|余白)/g;
+ while((m=re.exec(t))){add('leaveCapacity',{day:m[1]},m[1]+'曜日に余裕を残す',0.92);goals.push('leaveCapacity')}
+ // 一般的な最適化要望
+ if(/切替|切り替え|段取り/.test(t) && /減ら|少なく|最小|少な/.test(t)){add('minimizeSetups',{},'切替・段取りをできるだけ減らす',0.9);goals.push('minimizeSetups')}
+ if(/まとめて|連続(?:して|生産)|一気に|分散させない/.test(t)){add('batchContinuity',{products:ps},'同じ製品をできるだけまとめて生産',0.88);goals.push('batchContinuity')}
+ if(/前倒し|早め|前に寄せ/.test(t)){add('frontload',{},'可能な範囲で前倒し',0.9);goals.push('frontload')}
+ if(/後ろ倒し|後倒し|後ろに寄せ/.test(t)){add('backload',{},'可能な範囲で後ろ倒し',0.9);goals.push('backload')}
+ if(/余剰|余り|作りすぎ|過剰/.test(t) && /減ら|抑え|少なく|なく/.test(t)){add('minimizeSurplus',{},'余剰をできるだけ減らす',0.9);goals.push('minimizeSurplus')}
+ if(/均等|平準化|偏り.*なく|バランス/.test(t)){add('balance',{},'曜日間の負荷を平準化',0.85);goals.push('balance')}
+ if(/できるだけ|なるべく|可能な限り|可能なら|できる範囲/.test(t)){goals.push('soft')}
+ // 製品名だけでも「まとめたい」「増やしたい」などの意図を拾う
+ if(ps.length && /まとめ|集中|一緒|連続/.test(t) && !intents.some(function(x){return x.type==='batchContinuity'}))add('batchContinuity',{products:ps},ps.join('・')+'をまとめて生産',0.82);
+ if(!intents.length && (ps.length||ds.length)){
+   add('clarify',{products:ps,days:ds},'要望の方向は読み取れましたが、変更方法をもう少し確認したい',0.45);questions.push('どの曜日へ移す・減らす・増やすかを指定しますか？');
  }
- if(/できるだけ.*(?:前倒し|早め|前に)|前倒し|早め(?:に|たい)/.test(t)){
-   goals.push("frontload"); addIntent("frontload",{},"可能な範囲で前倒し");
- }
- if(/できるだけ.*(?:後ろ|後倒し)|後ろに|後倒し/.test(t)){
-   goals.push("backload"); addIntent("backload",{},"可能な範囲で後ろ倒し");
- }
- if(/(?:切り替え|切替|段取り).*(?:減ら|少なく|減少)|(?:減ら|少なく).*(?:切り替え|切替|段取り)/.test(t)){
-   goals.push("minimize_setups"); addIntent("minimizeSetups",{},"切替・段取りを減らす");
- }
- if(/(?:まとめて|連続(?:して|生産)|連続生産|一気に|分散させない)/.test(t)){
-   goals.push("batch_continuity"); addIntent("batchContinuity",{},"同一製品をまとめて連続生産");
- }
- if(/(?:余剰|余り|作りすぎ|過剰).*(?:減ら|少なく|抑え)|(?:減ら|少なく|抑え).*(?:余剰|余り|作りすぎ)/.test(t)){
-   goals.push("minimize_surplus"); addIntent("minimizeSurplus",{},"余剰を最小化");
- }
- if(/(?:木|火|水|木|金|土|日)曜日?.*(?:寄せ|集中|まとめ)/.test(t) && !moves.length){
-   var dd=dayOf(t); if(dd)addIntent("preferDay",{toDay:dd},"指定曜日へ生産を寄せる");
- }
- /* 「金曜が暇なら木曜に寄せたい」のような2曜日の意図 */
- var pair=t.match(/([月火水木金土日])曜日?.*?(?:余裕|空い|暇|余力).*?([月火水木金土日])曜日?.*?(?:寄せ|前倒し|移|回)/);
- if(pair){addIntent("shiftCapacity",{fromDay:pair[1],toDay:pair[2]},"余裕のある曜日から別曜日へ再配分");}
- var prodMention=planItems.map(function(x){return x.name}).filter(Boolean).sort(function(a,b){return String(b).length-String(a).length});
- var mentionedProducts=prodMention.filter(function(x){return t.indexOf(x)>=0});
- var surRe=/余剰分(?:は|を)?\s*([^\s、,。]+)\s*(?:を|で)?\s*(?:生産|作る|追加)/;m=surRe.exec(t);if(m){surplusTarget=m[1];addIntent("useSurplus",{product:surplusTarget},"余剰を指定製品へ回す");}
-
- /* 曜日や製品を明示せず「もう少し木曜に」「bをまとめたい」なども意図化 */
- if(/もう少し|できるだけ|なるべく|可能な限り|できる範囲/.test(t)) goals.push("soft_preference");
- if(/(?:[月火水木金土日])曜日?.*(?:に|へ).*(?:寄せ|集中|まとめ)/.test(t) && mentionedProducts.length){
-   var targetDay=dayOf(t); mentionedProducts.forEach(function(pr){if(targetDay && !preferred[pr]){preferred[pr]=targetDay;addIntent("preferDay",{product:pr,toDay:targetDay},"製品を指定曜日へ寄せる");}});
- }
- if(!intents.length && (goals.length || mentionedProducts.length)){
-   addIntent("optimize",{products:mentionedProducts,goals:goals},"自由記述の要望を計画最適化条件として解釈");
- }
- return {blockedDays:blockedDays,increase:increase,decrease:decrease,moves:moves,preferred:preferred,surplusTarget:surplusTarget,intents:intents,goals:goals,mentionedProducts:mentionedProducts,raw:t};
+ return {blockedDays:blocked,preferred:preferred,increase:increase,decrease:decrease,moves:moves,intents:intents,goals:goals,mentionedProducts:ps,questions:questions,raw:t};
 }
-
-function lineRows(rows,day,line){return rows.filter(function(r){return r.day===day&&r.line===line})}
-function stats(rows){
- var out=[];
- for(var d=0;d<7;d++)for(var li=0;li<lines.length;li++){var sc=getSc(li),avail=hoursForDay(sc,d)*60,rr=lineRows(rows,days[d],lines[li].name),used=rr.reduce(function(a,r){return a+num(r.total)},0),sets=rr.filter(function(r){return num(r.setup)>0}).length;out.push({day:days[d],line:lines[li].name,available:avail,used:used,left:Math.max(0,avail-used),setups:sets})}
- return out;
-}
+function lineRows(rows,day,line){return rows.filter(function(r){return r.day===day&&r.line===line});}
+function stats(rows){var normRows=recompute(rows||[]),out=[];for(var d=0;d<7;d++)for(var li=0;li<lines.length;li++){var sc=getSc(li),avail=hoursForDay(sc,d)*60,rr=lineRows(normRows,days[d],lines[li].name),used=rr.reduce(function(a,r){return a+num(r.total)},0);out.push({day:days[d],line:lines[li].name,available:avail,used:used,left:Math.max(0,avail-used),setups:rr.filter(function(r){return num(r.setup)>0}).length});}return out;}
+function cloneRows(rows){return rows.map(function(r){var x={};Object.keys(r).forEach(function(k){x[k]=r[k]});return x;});}
 function recompute(rows){
- var grouped={};
- rows.filter(function(r){return num(r.qty)>0.0001}).forEach(function(r){var k=r.day+"|"+r.line+"|"+r.product;if(!grouped[k])grouped[k]={day:r.day,line:r.line,product:r.product,qty:0,raw:r.raw,lot:r.lot,surplus:0};grouped[k].qty+=num(r.qty);grouped[k].surplus+=num(r.surplus)});
- var out=Object.keys(grouped).map(function(k){return grouped[k]});
- out.forEach(function(r){var line=lines.find(function(l){return l.name===r.line}),p=findProduct(r.product),cap=capacity(line,p)||1;r.run=r.qty/cap*60;r.setup=0;r.total=r.run;r.lot=minLot(line,p)});
- // Rebuild setup by chronological product order per day/line. Keep grouped products contiguous.
- out.sort(function(a,b){var d=days.indexOf(a.day)-days.indexOf(b.day);return d||a.line.localeCompare(b.line)||a.product.localeCompare(b.product)});
- var by={};out.forEach(function(r){(by[r.day+"|"+r.line]||(by[r.day+"|"+r.line]=[])).push(r)});
- Object.keys(by).forEach(function(k){var last="";by[k].forEach(function(r){var tr=transition(r.line,last,r.product);if(last&&tr.impossible){r.impossible=true;r.setup=0}else r.setup=last?tr.time:0;r.total=r.run+r.setup;last=r.product})});
+ var out=[];rows.filter(function(r){return num(r.qty)>0.0001}).forEach(function(r){var x=cloneRows([r])[0],p=findProduct(x.product),line=lines.filter(function(l){return l.name===x.line})[0],cap=effectiveCapacity(line,p)||1;x.qty=num(x.qty);x.run=x.qty/cap*60;x.setup=0;x.total=x.run;x.lot=effectiveLot(line,p);out.push(x)});
+ // 変更後の数量を曜日・ライン単位でまとめ、段取りを再計算。製品のまとまりを維持する。
+ var grouped={};out.forEach(function(r){var k=r.day+'|'+r.line+'|'+r.product;if(!grouped[k])grouped[k]={day:r.day,line:r.line,product:r.product,qty:0,raw:r.raw,lot:r.lot};grouped[k].qty+=r.qty});
+ out=Object.keys(grouped).map(function(k){return grouped[k]});
+ out.sort(function(a,b){return days.indexOf(a.day)-days.indexOf(b.day)||a.line.localeCompare(b.line)||a.product.localeCompare(b.product)});
+ var by={};out.forEach(function(r){(by[r.day+'|'+r.line]||(by[r.day+'|'+r.line]=[])).push(r)});
+ Object.keys(by).forEach(function(k){var rr=by[k],last='';rr.forEach(function(r){var p=findProduct(r.product),line=lines.filter(function(l){return l.name===r.line})[0],cap=effectiveCapacity(line,p)||1,tr=transition(r.line,last,r.product);r.setup=(last&&!tr.impossible)?tr.time:0;r.run=r.qty/cap*60;r.total=r.setup+r.run;r.impossible=!!tr.impossible;last=r.product;});});
  return out;
 }
-function basePlan(comment){
- var adj=parseAdjustmentComment(comment||""),remain=planItems.map(function(p){return{name:p.name,remain:num(p.qty),need:num(p.qty)}}),rows=[],warnings=[];
- var dayOrder=days.filter(function(d){return adj.blockedDays.indexOf(d)<0});
- dayOrder.sort(function(a,b){var pa=0,pb=0;remain.forEach(function(x){if(adj.preferred[x.name]===a)pa++;if(adj.preferred[x.name]===b)pb++});return pb-pa});
- dayOrder.forEach(function(day){
-  var d=days.indexOf(day);
-  lines.forEach(function(line,li){
-   var avail=hoursForDay(getSc(li),d)*60,last="";
-   if(avail<=0)return;
-   var candidates=remain.filter(function(x){return x.remain>0}).sort(function(a,b){var ap=adj.preferred[a.name]===day?0:1,bp=adj.preferred[b.name]===day?0:1;if(ap!==bp)return ap-bp;return b.remain-a.remain});
-   candidates.forEach(function(x){
-    if(x.remain<=0|| (adj.preferred[x.name]&&adj.preferred[x.name]!==day))return;
-    var p=findProduct(x.name);if(!p){warnings.push(x.name+"：製品設定がありません");return}
-    var cap=capacity(line,p),lot=minLot(line,p);if(cap<=0)return;
-    var tr=transition(line.name,last,p.name);if(tr.impossible)return;
-    var setup=last?tr.time:0,max=Math.floor(Math.max(0,avail-setup)*cap/60);if(max<=0)return;
-    var make=Math.min(x.remain,max),surplus=0;
-    if(lot>0&&make<lot){if(lot<=max){make=lot;surplus=lot-x.remain}else return}
-    if(make<=0)return;
-    rows.push({day:day,line:line.name,product:p.name,qty:make,raw:p.raw||"",lot:lot,setup:setup,run:make/cap*60,total:setup+make/cap*60,surplus:surplus});
-    x.remain=Math.max(0,x.remain-make);avail-=setup+make/cap*60;last=p.name;
-   });
-  });
- });
- return {rows:recompute(rows),remain:remain,warnings:warnings,adj:adj};
+function basePlan(){
+ var remain=planItems.map(function(p){return{name:p.name,remain:num(p.qty)}}),rows=[],warnings=[];
+ for(var d=0;d<7;d++)for(var li=0;li<lines.length;li++){
+  var day=days[d],line=lines[li],avail=hoursForDay(getSc(li),d)*60,last='';if(avail<=0)continue;
+  // 第1段階：需要を満たす
+  remain.sort(function(a,b){return b.remain-a.remain}).forEach(function(x){if(x.remain<=0)return;var p=findProduct(x.name);if(!p){warnings.push(x.name+'：製品設定がありません');return}var cap=effectiveCapacity(line,p),lot=effectiveLot(line,p);if(cap<=0)return;var tr=transition(line.name,last,p.name);if(tr.impossible)return;var setup=last?tr.time:0,max=Math.floor(Math.max(0,avail-setup)*cap/60);if(max<=0)return;var make=Math.min(x.remain,max),surplus=0;if(lot>0&&make<lot&&x.remain<=max){if(lot<=max){make=lot;surplus=lot-x.remain}else return}if(make<=0)return;rows.push({day:day,line:line.name,product:p.name,qty:make,raw:p.raw||'',lot:lot,surplus:surplus});x.remain=Math.max(0,x.remain-make);var used=setup+make/cap*60;avail-=used;last=p.name;});
+  // 第2段階：v30と同じ考え方で、残った稼働時間を可能な範囲で活用する。需要超過は明示する。
+  var candidates=planItems.map(function(q){return findProduct(q.name)}).filter(Boolean).sort(function(a,b){return (last===a.name?0:1)-(last===b.name?0:1)});
+  for(var ci=0;ci<candidates.length;ci++){
+    var cp=candidates[ci],ccap=effectiveCapacity(line,cp);if(ccap<=0)continue;var ctr=transition(line.name,last,cp.name);if(ctr.impossible)continue;var csetup=last?ctr.time:0;if(csetup>=avail)continue;var extra=Math.floor((avail-csetup)*ccap/60);if(extra<=0)continue;if(last!==cp.name&&extra<Math.max(1,effectiveLot(line,cp)))continue;rows.push({day:day,line:line.name,product:cp.name,qty:extra,raw:cp.raw||'',lot:effectiveLot(line,cp),surplus:extra,extra:true});avail-=csetup+extra/ccap*60;last=cp.name;
+  }
+ }
+ return {rows:recompute(rows),remain:remain,warnings:warnings};
 }
-
 function availableFor(rows,day,lineName,product){
- var line=lines.find(function(l){return l.name===lineName}),p=findProduct(product);if(!line||!p)return 0;
- var li=lines.indexOf(line),d=days.indexOf(day),cap=capacity(line,p),used=stats(rows).find(function(s){return s.day===day&&s.line===lineName}).used;
- var free=hoursForDay(getSc(li),d)*60-used;
- var target=rows.find(function(r){return r.day===day&&r.line===lineName&&r.product===product});
- var setup=0;if(!target){var rr=lineRows(rows,day,lineName);var last=rr[rr.length-1];if(last){var tr=transition(lineName,last.product,product);if(tr.impossible)return 0;setup=tr.time}}
- return Math.floor(Math.max(0,free-setup)*cap/60);
+ var line=lines.filter(function(l){return l.name===lineName})[0],p=findProduct(product);if(!line||!p)return 0;var d=days.indexOf(day),li=lines.indexOf(line),st=stats(rows).filter(function(x){return x.day===day&&x.line===lineName})[0];if(!st)return 0;var cap=effectiveCapacity(line,p),target=rows.filter(function(r){return r.day===day&&r.line===lineName&&r.product===product});var setup=0;if(!target.length){var rr=lineRows(rows,day,lineName),last=rr[rr.length-1];if(last){var tr=transition(lineName,last.product,product);if(tr.impossible)return 0;setup=tr.time}}return Math.floor(Math.max(0,st.left-setup)*cap/60);
 }
-function moveQuantity(rows,product,fromDay,toDay,qty){
- var src=rows.find(function(r){return r.day===fromDay&&r.product===product&&r.qty>0});if(!src)return 0;
- var line=lines.find(function(l){return l.name===src.line}),p=findProduct(product),cap=capacity(line,p),lot=minLot(line,p);if(!line||!p||cap<=0)return 0;
- var can=availableFor(rows,toDay,line.name,product),maxMove=Math.min(num(qty)>0?num(qty):src.qty,src.qty,can);
- if(maxMove<=0)return 0;
- if(src.qty-maxMove>0&&src.qty-maxMove<lot)maxMove=src.qty-lot;
- if(maxMove<=0)return 0;
- src.qty-=maxMove;
- var target=rows.find(function(r){return r.day===toDay&&r.line===line.name&&r.product===product});
- if(target)target.qty+=maxMove;else rows.push({day:toDay,line:line.name,product:product,qty:maxMove,raw:p.raw||"",lot:lot});
- return maxMove;
+function moveQty(rows,product,fromDay,toDay,qty){
+ var sources=rows.filter(function(r){return r.product===product&&r.day===fromDay&&r.qty>0}).sort(function(a,b){return b.qty-a.qty});if(!sources.length)return 0;var src=sources[0],line=lines.filter(function(l){return l.name===src.line})[0],p=findProduct(product),lot=effectiveLot(line,p),can=availableFor(rows,toDay,line.name,product),wanted=qty>0?qty:src.qty,max=Math.min(wanted,src.qty,can);if(src.qty-max>0&&src.qty-max<lot)max=Math.max(0,src.qty-lot);if(max<=0)return 0;src.qty-=max;var trg=rows.filter(function(r){return r.day===toDay&&r.line===src.line&&r.product===product})[0];if(trg)trg.qty+=max;else rows.push({day:toDay,line:src.line,product:product,qty:max,raw:p.raw||'',lot:lot});return max;
 }
-
+function shiftProductToDay(rows,product,toDay,qty){
+ var total=0,srcs=rows.filter(function(r){return r.product===product&&r.day!==toDay&&r.qty>0}).sort(function(a,b){return days.indexOf(b.day)-days.indexOf(a.day)});
+ for(var i=0;i<srcs.length&&(!qty||total<qty);i++){var n=moveQty(rows,product,srcs[i].day,toDay,qty?qty-total:0);total+=n;}return total;
+}
 function applyAdjustment(rows,comment){
- var adj=parseAdjustmentComment(comment),work=cloneRows(rows),changes=[],notes=[];
- // 1) Explicit move commands
- adj.moves.forEach(function(m){var n=moveQuantity(work,m.product,m.fromDay,m.toDay,0);if(n>0)changes.push(m.product+"を"+m.fromDay+"曜日から"+m.toDay+"曜日へ"+Math.floor(n)+"個移動");else notes.push(m.fromDay+"曜日の"+m.product+"は"+m.toDay+"曜日へ移動できる空き能力がありません")});
- // 2) Pair increase/decrease. This is the key fix for 「木曜日のaを増やして、金曜日のbを減らして」.
+ var adj=parseAdjustmentComment(comment),work=cloneRows(rows),changes=[],notes=[],usedTypes={};
+ function note(s){if(notes.indexOf(s)<0)notes.push(s)}
+ // 1. 明示的な移動
+ adj.moves.forEach(function(m){var n=moveQty(work,m.product,m.fromDay,m.toDay,m.qty);if(n)changes.push(m.product+'を'+m.fromDay+'曜日から'+m.toDay+'曜日へ'+Math.round(n).toLocaleString()+'個移動');else note(m.product+'を'+m.fromDay+'曜日から'+m.toDay+'曜日へ移動できる空き能力がありません');usedTypes.move=true});
+ // 2. 「増やす＋減らす」は原則として同数を再配分。曜日が違っても需要総量を変えない。
  adj.increase.forEach(function(inc){
-   var dec=adj.decrease.find(function(x){return x.product!==inc.product&&x.day===inc.day})||adj.decrease.find(function(x){return x.product!==inc.product});
-   if(!dec)return;
-   var src=work.find(function(r){return r.day===dec.day&&r.product===dec.product&&r.qty>0});
-   if(!src){notes.push(dec.day+"曜日の"+dec.product+"の計画が見つかりません");return}
-   var line=lines.find(function(l){return l.name===src.line}),pInc=findProduct(inc.product),pDec=findProduct(dec.product);
-   if(!line||!pInc||!pDec){notes.push("製品設定またはライン設定が見つかりません");return}
-   var maxDec=Math.max(0,src.qty-minLot(line,pDec)), requested=inc.qty>0?inc.qty:(dec.qty>0?dec.qty:maxDec);
-   var canInc=availableFor(work,inc.day,line.name,inc.product);
-   var move=Math.min(requested,maxDec,canInc);
-   if(move<=0){notes.push(inc.day+"曜日の"+inc.product+"を増やせる空き能力がありません");return}
-   src.qty-=move;
-   var target=work.find(function(r){return r.day===inc.day&&r.line===line.name&&r.product===inc.product});
-   if(target)target.qty+=move;else work.push({day:inc.day,line:line.name,product:inc.product,qty:move,raw:pInc.raw||"",lot:minLot(line,pInc)});
-   changes.push(inc.day+"曜日の"+inc.product+"を"+Math.floor(move)+"個増やし、"+dec.day+"曜日の"+dec.product+"を同数減らしました");
-   if(dec.day!==inc.day){
-     // The reduction is already removed from dec.day; demand quantity is preserved by adding the same quantity to inc.day.
-     notes.push("需要総量は変更せず、指定された曜日間で数量を再配分しました");
-   }
+  var dec=adj.decrease.find(function(x){return x.product!==inc.product&&x.day===inc.day})||adj.decrease.find(function(x){return x.product!==inc.product});
+  if(dec){var src=work.filter(function(r){return r.day===dec.day&&r.product===dec.product&&r.qty>0}).sort(function(a,b){return b.qty-a.qty})[0];if(!src){note(dec.day+'曜日の'+dec.product+'の計画が見つかりません');return}var line=lines.filter(function(l){return l.name===src.line})[0],p=findProduct(inc.product),cap=effectiveCapacity(line,p),lot=effectiveLot(line,p),can=availableFor(work,inc.day,line.name,inc.product),requested=inc.qty||dec.qty||src.qty-lot,move=Math.min(requested,Math.max(0,src.qty-lot),can);if(move>0){src.qty-=move;var trg=work.filter(function(r){return r.day===inc.day&&r.line===line.name&&r.product===inc.product})[0];if(trg)trg.qty+=move;else work.push({day:inc.day,line:line.name,product:inc.product,qty:move,raw:p.raw||'',lot:lot});changes.push(inc.day+'曜日の'+inc.product+'を'+Math.round(move).toLocaleString()+'個増やし、'+dec.day+'曜日の'+dec.product+'を同数減らしました');usedTypes.pair=true}else note(inc.day+'曜日の'+inc.product+'を増やすための空き能力がありません');}
  });
- // 3) Explicit decreases without paired increase
- if(!adj.increase.length)adj.decrease.forEach(function(dec){var r=work.find(function(x){return x.day===dec.day&&x.product===dec.product&&x.qty>0});if(!r)return;var lot=minLot(lines.find(function(l){return l.name===r.line}),findProduct(r.product)),n=dec.qty>0?Math.min(dec.qty,Math.max(0,r.qty-lot)):Math.max(0,r.qty-lot);if(n>0){r.qty-=n;changes.push(dec.day+"曜日の"+dec.product+"を"+Math.floor(n)+"個減らしました")}}); 
- // 4) Explicit increases without paired decrease: use free capacity, but do not invent demand.
- if(!adj.decrease.length)adj.increase.forEach(function(inc){var p=findProduct(inc.product);if(!p)return;var done=false;for(var li=0;li<lines.length&&!done;li++){var n=availableFor(work,inc.day,lines[li].name,inc.product);if(n>0){var q=inc.qty>0?Math.min(inc.qty,n):n;var r=work.find(function(x){return x.day===inc.day&&x.line===lines[li].name&&x.product===inc.product});if(r)r.qty+=q;else work.push({day:inc.day,line:lines[li].name,product:inc.product,qty:q,raw:p.raw||"",lot:minLot(lines[li],p)});changes.push(inc.day+"曜日の"+inc.product+"を"+Math.floor(q)+"個増やしました");done=true}}});
- // 5) Preferred-day moves
- Object.keys(adj.preferred).forEach(function(product){var to=adj.preferred[product];var src=work.find(function(r){return r.product===product&&r.day!==to&&r.qty>0});if(src){var n=moveQuantity(work,product,src.day,to,0);if(n>0)changes.push(product+"を"+src.day+"曜日から"+to+"曜日へ"+Math.floor(n)+"個移動")}});
- /* 自然言語で表現された「意図」を、既存計画の再配分条件へ落とし込む */
+ // 3. 増加だけなら、その製品を他曜日から移して需要総量を維持
+ if(!adj.decrease.length)adj.increase.forEach(function(inc){var n=shiftProductToDay(work,inc.product,inc.day,inc.qty);if(n){changes.push(inc.product+'を他曜日から'+inc.day+'曜日へ'+Math.round(n).toLocaleString()+'個寄せました');usedTypes.increase=true}else note(inc.day+'曜日の'+inc.product+'を増やせる再配分元がありません');});
+ // 4. 減少だけなら、原則として他曜日へ振替。需要を落とさない。
+ if(!adj.increase.length)adj.decrease.forEach(function(dec){var srcs=work.filter(function(r){return r.day===dec.day&&r.product===dec.product&&r.qty>0});srcs.forEach(function(src){var others=days.filter(function(d){return d!==dec.day});for(var i=0;i<others.length&&(dec.qty<=0||src.qty>effectiveLot(lines.filter(function(l){return l.name===src.line})[0],findProduct(src.product)));i++){var n=moveQty(work,dec.product,dec.day,others[i],dec.qty||0);if(n){changes.push(dec.day+'曜日の'+dec.product+'を'+Math.round(n).toLocaleString()+'個減らし、'+others[i]+'曜日へ振り替え');if(dec.qty)dec.qty-=n;break}}});});
+ // 5. 「余裕のある曜日から別曜日へ」
+ adj.intents.filter(function(i){return i.type==='shiftCapacity'}).forEach(function(it){var from=it.data.fromDay,to=it.data.toDay;var srcs=work.filter(function(r){return r.day===from&&r.qty>0}).sort(function(a,b){return b.qty-a.qty});srcs.forEach(function(src){var n=moveQty(work,src.product,from,to,0);if(n)changes.push(src.product+'を'+from+'曜日から'+to+'曜日へ'+Math.round(n).toLocaleString()+'個再配分');});usedTypes.shift=true});
+ // 6. 製品を指定曜日へ寄せる
+ Object.keys(adj.preferred).forEach(function(p){var n=shiftProductToDay(work,p,adj.preferred[p],0);if(n)changes.push(p+'を'+adj.preferred[p]+'曜日へ'+Math.round(n).toLocaleString()+'個寄せました');else note(p+'を'+adj.preferred[p]+'曜日へ移せる空き能力がありません');usedTypes.prefer=true});
+ // 7. 前倒し／後ろ倒し
  adj.intents.forEach(function(it){
-   if(it.type==="shiftCapacity" && it.data.fromDay && it.data.toDay){
-     var from=it.data.fromDay,to=it.data.toDay;
-     var sources=work.filter(function(r){return r.day===from&&num(r.qty)>0.0001}).sort(function(a,b){return num(b.qty)-num(a.qty)});
-     sources.forEach(function(src){
-       var p=findProduct(src.product),line=lines.find(function(l){return l.name===src.line});
-       if(!p||!line)return;
-       var lot=minLot(line,p),movable=Math.max(0,num(src.qty)-lot);
-       var can=availableFor(work,to,line.name,src.product),n=Math.min(movable,can);
-       if(n>0){src.qty-=n;var trg=work.find(function(r){return r.day===to&&r.line===line.name&&r.product===src.product});if(trg)trg.qty+=n;else work.push({day:to,line:line.name,product:src.product,qty:n,raw:p.raw||"",lot:lot});changes.push(src.product+"を"+from+"曜日から"+to+"曜日へ"+Math.floor(n)+"個再配分");}
-     });
-   }
-   if(it.type==="frontload"){
-     var order=days.slice().sort(function(a,b){return days.indexOf(a)-days.indexOf(b)});
-     for(var di=1;di<order.length;di++){var later=order[di], earlier=order[di-1];var srcs=work.filter(function(r){return r.day===later&&num(r.qty)>0}).sort(function(a,b){return num(b.qty)-num(a.qty)});
-       srcs.forEach(function(src){var p=findProduct(src.product),line=lines.find(function(l){return l.name===src.line});if(!p||!line)return;var n=Math.min(Math.max(0,num(src.qty)-minLot(line,p)),availableFor(work,earlier,line.name,src.product));if(n>0){src.qty-=n;var trg=work.find(function(r){return r.day===earlier&&r.line===line.name&&r.product===src.product});if(trg)trg.qty+=n;else work.push({day:earlier,line:line.name,product:src.product,qty:n,raw:p.raw||"",lot:minLot(line,p)});changes.push(src.product+"を"+later+"曜日から"+earlier+"曜日へ"+Math.floor(n)+"個前倒し");}});
-     }
-   }
-   if(it.type==="backload"){
-     var order2=days.slice().sort(function(a,b){return days.indexOf(b)-days.indexOf(a)});
-     for(var dj=1;dj<order2.length;dj++){var earlier2=order2[dj],later2=order2[dj-1];var srcs2=work.filter(function(r){return r.day===earlier2&&num(r.qty)>0}).sort(function(a,b){return num(b.qty)-num(a.qty)});
-       srcs2.forEach(function(src){var p=findProduct(src.product),line=lines.find(function(l){return l.name===src.line});if(!p||!line)return;var n=Math.min(Math.max(0,num(src.qty)-minLot(line,p)),availableFor(work,later2,line.name,src.product));if(n>0){src.qty-=n;var trg=work.find(function(r){return r.day===later2&&r.line===line.name&&r.product===src.product});if(trg)trg.qty+=n;else work.push({day:later2,line:line.name,product:src.product,qty:n,raw:p.raw||"",lot:minLot(line,p)});changes.push(src.product+"を"+earlier2+"曜日から"+later2+"曜日へ"+Math.floor(n)+"個後ろ倒し");}});
-     }
-   }
-   if(it.type==="maximizeCapacity"){
-     /* 明示的な移動先がない場合、残余時間の大きい日へ少量ずつ再配分する。
-        需要総量は変えず、最低生産数量未満にはしない。 */
-     var ss=stats(work).filter(function(x){return x.available>0}).sort(function(a,b){return b.left-a.left});
-     if(ss.length>1){
-       var target=ss[0];
-       work.filter(function(r){return r.day!==target.day&&num(r.qty)>0}).sort(function(a,b){return num(b.qty)-num(a.qty)}).forEach(function(src){
-         if(target.left<0.05)return;
-         var p=findProduct(src.product),line=lines.find(function(l){return l.name===src.line});if(!p||!line)return;
-         var n=Math.min(Math.max(0,num(src.qty)-minLot(line,p)),availableFor(work,target.day,line.name,src.product));
-         if(n>0){src.qty-=n;var trg=work.find(function(r){return r.day===target.day&&r.line===line.name&&r.product===src.product});if(trg)trg.qty+=n;else work.push({day:target.day,line:line.name,product:src.product,qty:n,raw:p.raw||"",lot:minLot(line,p)});changes.push(src.product+"を"+target.day+"曜日へ"+Math.floor(n)+"個再配分（空き時間活用）");}
-       });
-     }
-   }
+  if(it.type==='frontload'){for(var d=1;d<7;d++)work.filter(function(r){return r.day===days[d]&&r.qty>0}).slice().forEach(function(r){var n=moveQty(work,r.product,days[d],days[d-1],0);if(n)changes.push(r.product+'を'+days[d]+'曜日から'+days[d-1]+'曜日へ'+Math.round(n).toLocaleString()+'個前倒し')});}
+  if(it.type==='backload'){for(var d2=5;d2>=0;d2--)work.filter(function(r){return r.day===days[d2]&&r.qty>0}).slice().forEach(function(r){var n=moveQty(work,r.product,days[d2],days[d2+1],0);if(n)changes.push(r.product+'を'+days[d2]+'曜日から'+days[d2+1]+'曜日へ'+Math.round(n).toLocaleString()+'個後ろ倒し')});}
  });
- work=recompute(work);
- return {rows:work,changes:changes,notes:notes,adj:adj};
+ // 8. 空き活用・指定日の充填
+ adj.intents.forEach(function(it){
+  if(it.type==='fillDay'||it.type==='shiftCapacity'){
+   var td=it.data.day||it.data.toDay; if(it.type==='shiftCapacity')td=it.data.toDay;if(!td)return;
+   var candidates=work.filter(function(r){return r.day!==td&&r.qty>0}).sort(function(a,b){return b.qty-a.qty});candidates.forEach(function(r){var n=moveQty(work,r.product,r.day,td,0);if(n)changes.push(r.product+'を'+td+'曜日へ'+Math.round(n).toLocaleString()+'個再配分（空き時間活用）');});
+  }
+  if(it.type==='leaveCapacity'){note(it.data.day+'曜日には余裕を残す条件を優先しました。');var bd=it.data.day;var st=stats(work).filter(function(x){return x.day===bd})[0];if(st){var keep=60;work.filter(function(r){return r.day===bd&&r.qty>0}).slice().sort(function(a,b){return b.qty-a.qty}).forEach(function(r){if(st.left<keep){var dest=days.filter(function(d){return d!==bd&&availableFor(work,d,r.line,r.product)>0})[0];if(dest){var n=moveQty(work,r.product,bd,dest,0);if(n){changes.push(r.product+'を'+bd+'曜日から'+dest+'曜日へ'+Math.round(n).toLocaleString()+'個移動');st=stats(work).filter(function(x){return x.day===bd})[0]}}}})}}
+ });
+ // 9. 切替削減・まとめ生産：数量を壊さず、同一製品を同じ曜日へ集約できる場合に移す
+ if(adj.goals.indexOf('batchContinuity')>=0||adj.goals.indexOf('minimizeSetups')>=0){
+   var byProd={};work.forEach(function(r){(byProd[r.product]||(byProd[r.product]=[])).push(r)});
+   Object.keys(byProd).forEach(function(pn){var rr=byProd[pn];if(rr.length<2)return;var target=rr.slice().sort(function(a,b){return b.qty-a.qty})[0];rr.slice().filter(function(r){return r!==target}).forEach(function(src){var n=moveQty(work,pn,src.day,target.day,0);if(n)changes.push(pn+'を'+target.day+'曜日にまとめ、切替を抑制（'+Math.round(n).toLocaleString()+'個）')});});
+ }
+ // 10. 曜日停止の明示条件
+ adj.blockedDays.forEach(function(bd){work.filter(function(r){return r.day===bd&&r.qty>0}).slice().forEach(function(r){var dest=days.filter(function(d){return d!==bd&&availableFor(work,d,r.line,r.product)>0})[0];if(dest){var n=moveQty(work,r.product,bd,dest,0);if(n)changes.push(bd+'曜日の'+r.product+'を'+dest+'曜日へ振替');else note(bd+'曜日の'+r.product+'を振替できる能力が不足しています')}})});
+ return {rows:recompute(work),changes:changes,notes:notes,adj:adj};
 }
-
-function render(rows,title,comment){
+function blockedCapacity(rows,day,product,lineName){return availableFor(rows,day,lineName,product);}
+function renderPlan(rows,title,comment){
  var st=stats(rows),need={};planItems.forEach(function(p){need[p.name]={need:num(p.qty),prod:0}});rows.forEach(function(r){if(!need[r.product])need[r.product]={need:0,prod:0};need[r.product].prod+=num(r.qty)});
- var s='<div class="card"><h2>'+esc(title)+'</h2>';if(comment)s+='<div class="hint"><b>反映したコメント：</b><br>'+esc(comment)+'</div>';
- st.forEach(function(x){if(x.available>0)s+='<div class="item"><b>'+x.day+'曜日｜'+esc(x.line)+'</b><div class="small">実働可能 '+(x.available/60).toFixed(2)+'時間　計画 '+(x.used/60).toFixed(2)+'時間　残余 '+(x.left/60).toFixed(2)+'時間　段取り '+x.setups+'回</div></div>'});
- rows.forEach(function(r){s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+Math.round(r.qty).toLocaleString()+'個</div><div class="small">生産 '+(r.run/60).toFixed(2)+'時間　段取り '+Math.round(r.setup||0)+'分　合計 '+(r.total/60).toFixed(2)+'時間'+(r.surplus>0?'　⚠最低数量による余剰 '+Math.round(r.surplus)+'個':'')+'</div></div>'});
- s+='<h3>需要との差</h3>';Object.keys(need).forEach(function(k){var v=need[k],d=v.prod-v.need;s+='<div class="item"><b>'+esc(k)+'</b>　需要 '+v.need.toLocaleString()+'個　生産 '+Math.round(v.prod).toLocaleString()+'個　差 '+Math.round(d).toLocaleString()+'個'+(d>0?'　⚠余剰':'')+'</div>'});
+ var s='<div class="card"><h2>'+esc(title)+'</h2>'+(comment?'<div class="hint"><b>反映したコメント：</b><br>'+esc(comment)+'</div>':'');
+ st.forEach(function(x){if(x.available>0)s+='<div class="item"><b>'+x.day+'曜日｜'+esc(x.line)+'</b><div class="small">実働可能 '+(x.available/60).toFixed(2)+'時間　計画 '+(x.used/60).toFixed(2)+'時間　残余 '+(x.left/60).toFixed(2)+'時間　切替 '+x.setups+'回</div></div>'});
+ rows.forEach(function(r){s+='<div class="item"><b>'+r.day+'曜日｜'+esc(r.line)+'</b><div>'+esc(r.product)+'：'+Math.round(r.qty).toLocaleString()+'個</div><div class="small">生産 '+(r.run/60).toFixed(2)+'時間　段取り '+Math.round(r.setup||0)+'分　合計 '+(r.total/60).toFixed(2)+'時間'+(r.surplus>0?'　⚠最低数量による余剰 '+Math.round(r.surplus)+'個':'')+(r.impossible?'　⚠切替不可':'')+'</div></div>'});
+ s+='<h3>需要との差</h3>';Object.keys(need).forEach(function(k){var v=need[k],d=v.prod-v.need;s+='<div class="item"><b>'+esc(k)+'</b>　需要 '+Math.round(v.need).toLocaleString()+'個　生産 '+Math.round(v.prod).toLocaleString()+'個　差 '+Math.round(d).toLocaleString()+'個'+(d>0?'　⚠余剰':d<0?'　⚠不足':'')+'</div>'});
  return s+'</div>';
 }
+function adjustmentPanel(base){
+ var wrap=document.createElement('div');wrap.id='adjustmentPanel';wrap.className='card';
+ wrap.innerHTML='<h2>最終調整（対話型）</h2><div class="hint"><b>決まった文章は不要です。</b><br>「金曜が空いているから木曜に寄せたい」「切替が多いので減らしたい」「bはまとめて作りたい」「木曜をなるべくフル稼働にしたい」など、現場で思ったことをそのまま入力してください。<br><br>理解できた内容は画面に表示し、実行できる場合は変更前・変更後を比較します。曖昧な場合は確認事項を返します。</div><textarea id="adjustmentComment" placeholder="生産計画への修正要望を自由に入力してください"></textarea><button class="orange" id="applyAdjustment">コメントを理解して再計画</button><div id="adjustmentResult"></div>';
+ app.appendChild(wrap);
+ document.getElementById('applyAdjustment').onclick=function(){
+   var c=document.getElementById('adjustmentComment').value.trim(),r=document.getElementById('adjustmentResult');if(!c){r.innerHTML='<div class="small">要望を入力してください。</div>';return}
+   var a=parseAdjustmentComment(c);
+   if(!a.intents.length){r.innerHTML='<div class="warn"><b>まだ要望の意図を判断できません。</b><br>「何を変えたいか」を自由に書いてください。例：『金曜が暇なので木曜に寄せたい』『切替を減らしたい』など。</div>';return}
+   var hasClarify=a.intents.some(function(x){return x.type==='clarify'}),res=applyAdjustment(base.rows,c),intentText=a.intents.filter(function(x){return x.type!=='clarify'}).map(function(x){var d=x.data||{};return x.reason+(d.product?'（製品：'+d.product+'）':'')+(d.day?'（曜日：'+d.day+'）':'')+(d.fromDay?'（'+d.fromDay+'→'+d.toDay+'）':'')}).join('、');
+   var h='<div class="card"><h3>理解した要望</h3><div class="hint">'+esc(intentText||'要望の方向を確認しました')+'</div>';
+   if(hasClarify)h+='<div class="warn"><b>確認したい点があります。</b><br>現在のコメントだけでは変更方法が一意ではありません。たとえば「木曜に寄せたい」なら、どの製品を寄せるか、または「金曜の生産を木曜へ移す」という意味かを追加してもらえると確実です。</div>';
+   h+='</div>';
+   h+=renderPlan(base.rows,'変更前の計画');
+   h+=renderPlan(res.rows,'変更後の計画',c);
+   h+='<div class="card"><h3>再計画の結果</h3>';
+   if(res.changes.length)res.changes.forEach(function(x){h+='<div class="ok">✓ '+esc(x)+'</div>'});else h+='<div class="warn">要望は理解しましたが、現在の条件では実行可能な数量変更がありませんでした。</div>';
+   res.notes.forEach(function(x){h+='<div class="small">・'+esc(x)+'</div>'});
+   h+='<div class="hint" style="margin-top:10px">需要数量そのものは原則として変えず、曜日・ライン間で再配分します。最低ロット、稼働時間、製品能力、切替条件を確認してから結果を出します。</div></div>';
+   r.innerHTML=h;
+ };
+}
 function planResult(){
- if(!lines.length){alert("先にラインを登録してください");return}
- var base=basePlan(""),html=render(base.rows,"今週の生産案");var un=base.remain.filter(function(x){return x.remain>0});
- if(un.length){html+='<div class="card warn"><b>⚠ 未計画</b>';un.forEach(function(x){html+='<div>'+esc(x.name)+'：'+Math.ceil(x.remain)+'個</div>'});html+='</div>'}else html+='<div class="card"><div class="ok">需要を割り付けました。</div></div>';
- html+='<div class="card" id="adjustmentPanel"><h2>最終調整</h2><div class="hint"><b>入力例：</b>例：「金曜が空いているので木曜に寄せたい」「切替をできるだけ減らしたい」「bはまとめて作りたい」「できるだけ前倒ししたい」「金曜日はなるべく空けたい」。決まった文章でなく、現場での要望をそのまま入力してください。</div><textarea id="adjustmentComment" placeholder="生産計画への修正要望を入力してください"></textarea><button class="orange" id="applyAdjustment">コメントを反映して再計画</button><div id="adjustmentResult"></div></div><button class="gray" id="b">戻る</button>';
- app.innerHTML=html;document.getElementById("b").onclick=home;window.__baseRows=cloneRows(base.rows);
- document.getElementById("applyAdjustment").onclick=function(){
- var c=document.getElementById("adjustmentComment").value.trim(),r=document.getElementById("adjustmentResult");
- if(!c){r.innerHTML='<div class="small">コメントを入力してください。</div>';return}
- var parsed=parseAdjustmentComment(c);
- if(!parsed.intents.length){
-   r.innerHTML='<div class="warn"><b>要望の意味を特定できませんでした。</b><div class="small">固定された言い方をする必要はありません。例えば「金曜が空いているので木曜に寄せたい」「切替をできるだけ減らしたい」「bはまとめて作りたい」のように、現場での希望をそのまま入力してください。</div></div>';return;
- }
- var intentText=parsed.intents.map(function(x){
-   var d=x.data||{},z=x.reason||x.type;
-   if(d.fromDay&&d.toDay)z+='（'+d.fromDay+'曜日→'+d.toDay+'曜日）';
-   else if(d.day)z+='（'+d.day+'曜日）';
-   else if(d.product)z+='（'+d.product+'）';
-   return z;
- }).join('、');
- var res=applyAdjustment(window.__baseRows,c),h='<div class="card"><h3>読み取った要望</h3><div class="hint">'+esc(intentText)+'</div><div class="small">この意味を再計画条件として使用しました。単なるコメント表示ではありません。</div></div>';
- h+=render(window.__baseRows,"変更前の計画")+render(res.rows,"変更後の計画",c);
- h+='<div class="card"><h3>再計画結果</h3>';
- if(res.changes.length)res.changes.forEach(function(x){h+='<div class="ok">✓ '+esc(x)+'</div>'});
- else h+='<div class="warn">要望は理解しましたが、現在の計画条件では実行可能な変更がありませんでした。</div>';
- res.notes.forEach(function(x){h+='<div class="small">・'+esc(x)+'</div>'});
- h+='<div class="small">評価：需要を崩さず、稼働時間の活用・余剰削減・連続生産・切替削減を考慮して再配置しています。</div></div>';
- r.innerHTML=h;
-};
-saveAll();home();
+ if(!lines.length){alert('先にラインを登録してください。');return}
+ var base=basePlan(),un=base.remain.filter(function(x){return x.remain>0}),s=renderPlan(base.rows,'今週の生産案');
+ if(base.warnings.length){s+='<div class="card"><b>確認が必要</b>';base.warnings.forEach(function(w){s+='<div class="small">・'+esc(w)+'</div>'});s+='</div>'}
+ if(un.length){s+='<div class="card warn"><b>⚠ 未計画</b>';un.forEach(function(x){s+='<div>'+esc(x.name)+'：'+Math.ceil(x.remain).toLocaleString()+'個</div>'});s+='<div class="small">今週の実働時間・能力・最低ロット・切替条件を考慮しても割り付けできない数量です。</div></div>'}else s+='<div class="card"><div class="ok">需要を割り付けました。</div></div>';
+ s+='<button class="gray" id="b">戻る</button>';app.innerHTML=s;document.getElementById('b').onclick=planHome;adjustmentPanel(base);
+}
+
+var originalHome=home;
+function homeWithV22(){
+  originalHome();
+  var a=document.createElement("button");
+  a.className="orange"; a.textContent="製品設定"; a.onclick=productMasterPage;
+  app.firstElementChild.appendChild(a);
+  var b=document.createElement("button");
+  b.className="orange"; b.textContent="切替・段取りルール"; b.onclick=transitionPage;
+  app.firstElementChild.appendChild(b);
+  var c=document.createElement("button");
+  c.className="orange"; c.textContent="今週の生産計画"; c.onclick=planHome;
+  app.firstElementChild.appendChild(c);
+}
+home=homeWithV22;
+home();
 </script></main></body></html>
