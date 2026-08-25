@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.3（生産順序・余力最適化版）</title>
+<title>AI生産計画 v36（基本計画エンジン再設計版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:16px}.title{font-size:20px;font-weight:800}
@@ -19,7 +19,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 </style>
 </head>
 <body>
-<header><div class="title">AI生産計画 v35.3（生産順序・余力最適化版）</div>
+<header><div class="title">AI生産計画 v36（基本計画エンジン再設計版）</div>
 <div>v30を基準に、自然な現場コメントを「意図」として解釈して再計画</div></header>
 <main id="app"></main>
 <script>
@@ -209,154 +209,53 @@ function demandPage(){
  document.getElementById("back").onclick=home;
 }
 function basePlan(){
- const remaining=demands.map(d=>({
-   name:String(d.name||d.product||""),
-   need:n(d.demand??d.qty),
-   remain:n(d.demand??d.qty)
- })).filter(x=>x.name&&x.remain>0);
+ const needs=demands.map(d=>({name:String(d.name||d.product||"").trim(),need:n(d.demand??d.qty),remain:n(d.demand??d.qty)})).filter(x=>x.name&&x.remain>0.001);
  const rows=[];
- const used={};
- DAYS.forEach(d=>used[d]={});
- const forbidden=(line,from,to)=>setup(line,from,to)===Infinity;
-
- // Build a feasible plan day-by-day, but choose the next product by a score:
- // same product continuity > low setup > high utilization > larger remaining demand.
  for(const li of lines){
-   const liIndex=lines.indexOf(li), sc=lineSchedule(liIndex);
+   const sc=lineSchedule(lines.indexOf(li)); let last="";
    for(let di=0;di<DAYS.length;di++){
-     const day=sc.days[di];
-     let free=workMin(day);
-     if(free<=0)continue;
-     let last="";
-     let guard=0;
-     while(free>0.01 && guard++<1000){
-       const candidates=remaining.filter(x=>x.remain>0.001);
-       if(!candidates.length)break;
-
-       let best=null;
-       for(const q of candidates){
-         const p=product(q.name), c=cap(li,p);
-         if(c<=0)continue;
-         const st=setup(li.name,last,q.name);
-         if(st===Infinity || st>=free)continue;
-         const same=last===q.name?100000:0;
-         const continuity=(last===q.name?50000:0);
-         const setupPenalty=st*250;
-         const demandScore=Math.min(q.remain, c*free/60);
-         const min=lot(li,p);
-         // Prefer a meaningful run rather than tiny fragments.
-         const run=Math.min(q.remain,Math.max(min,c*Math.max(0,free-st)/60));
-         const score=same+continuity+demandScore*10+run-setupPenalty;
-         if(!best||score>best.score)best={q,p,c,st,score};
-       }
-       if(!best)break;
-
-       const {q,p,c,st}=best;
-       free-=st;
-       let qty=Math.min(q.remain,free*c/60);
-       if(qty<=0)break;
-
-       const min=lot(li,p);
-       // Minimum lot is a floor only when the planned production would otherwise
-       // be below it. Never round all production to multiples.
-       let surplus=0;
-       if(qty<q.remain && qty<min){
-         const possible=min;
-         const needMinMinutes=possible/c*60;
-         if(needMinMinutes<=free+0.0001){
-           qty=possible;
-           surplus=Math.max(0,qty-Math.min(q.remain,qty));
-         }
-       }
-
-       const minutes=qty/c*60;
-       const existing=rows.find(r=>r.day===DAYS[di]&&r.line===li.name&&r.product===q.name);
-       if(existing){
-         existing.qty+=qty;
-         existing.minutes+=minutes;
-         existing.setup+=st;
-       }else{
-         rows.push({day:DAYS[di],line:li.name,product:q.name,qty,minutes,setup:st,surplus});
-       }
-       q.remain=Math.max(0,q.remain-qty);
-       free=Math.max(0,free-minutes);
-       last=q.name;
+     const day=sc.days[di]; let free=workMin(day); if(free<=0.01)continue; let guard=0;
+     while(free>0.01&&guard++<2000){
+       const cand=needs.filter(q=>q.remain>0.001).map(q=>{
+         const p=product(q.name),c=cap(li,p); if(c<=0)return null;
+         const st=setup(li.name,last,q.name); if(st===Infinity||st>=free)return null;
+         let qty=Math.min(q.remain,Math.max(0,(free-st)*c/60)); if(qty<=0)return null;
+         let surplus=0,minQ=lot(li,p);
+         if(qty<q.remain&&qty<minQ){const mm=minQ/c*60;if(mm<=free-st+1e-4){qty=minQ;surplus=Math.max(0,minQ-q.remain)}}
+         const score=(last===q.name?1000000:0)+(last===q.name?200000:0)+Math.min(q.remain,qty)*100+(qty/c*60)*25-st*1200-surplus*2500;
+         return {q,p,c,st,qty,surplus,score};
+       }).filter(Boolean).sort((a,b)=>b.score-a.score);
+       if(!cand.length)break; const x=cand[0]; free-=x.st; const mins=x.qty/x.c*60; if(mins>free+1e-4)break;
+       rows.push({day,line:li.name,product:x.q.name,qty:x.qty,minutes:mins,setup:x.st,surplus:x.surplus});
+       x.q.remain=Math.max(0,x.q.remain-x.qty); free=Math.max(0,free-mins); last=x.q.name;
      }
    }
  }
-
- return {
-   rows,
-   unallocated:remaining.filter(x=>x.remain>0.001),
-   objective:planObjective(rows)
- };
+ const merged=[]; for(const r of rows){const p=merged[merged.length-1]; if(p&&p.day===r.day&&p.line===r.line&&p.product===r.product){p.qty+=r.qty;p.minutes+=r.minutes;p.setup+=r.setup;p.surplus+=r.surplus}else merged.push({...r})}
+ return {rows:merged,unallocated:needs.filter(x=>x.remain>0.001),objective:planObjective(merged)};
 }
 
+function improvePlan(rows){
+ let best=JSON.parse(JSON.stringify(rows)),bestScore=planObjective(best).score;
+ for(let pass=0;pass<3;pass++){let changed=false;
+  for(const r of JSON.parse(JSON.stringify(best))){
+   const li=lines.find(x=>x.name===r.line),p=product(r.product),c=cap(li,p); if(!li||!c)continue;
+   for(const day of DAYS){if(day===r.day)continue; const used=best.filter(x=>x.day===day).reduce((a,x)=>a+n(x.minutes)+n(x.setup),0); const free=Math.max(0,workMin(day)-used); const st=setup(li.name,"",r.product); if(st===Infinity)continue; const q=Math.min(r.qty,Math.max(0,(free-st)*c/60)); if(q<=.001)continue;
+    const trial=JSON.parse(JSON.stringify(best)); const src=trial.find(x=>x.day===r.day&&x.line===r.line&&x.product===r.product); if(!src)continue; src.qty-=q;src.minutes-=q/c*60;if(src.qty<=.001)trial.splice(trial.indexOf(src),1);
+    const dst=trial.find(x=>x.day===day&&x.line===r.line&&x.product===r.product); if(dst){dst.qty+=q;dst.minutes+=q/c*60}else trial.push({day,line:r.line,product:r.product,qty:q,minutes:q/c*60,setup:st,surplus:0});
+    const s=planObjective(trial).score;if(s>bestScore+.01){best=trial;bestScore=s;changed=true}
+   }
+  }
+  if(!changed)break;
+ }
+ return best;
+}
 function planObjective(rows){
- let setupMin=0,setupCount=0,totalRun=0;
- const dayUse={}; DAYS.forEach(d=>dayUse[d]=0);
- rows.forEach(r=>{
-   setupMin+=n(r.setup);
-   if(n(r.setup)>0)setupCount++;
-   totalRun+=n(r.minutes);
-   dayUse[r.day]+=n(r.minutes)+n(r.setup);
- });
- const activeDays=Object.values(dayUse).filter(x=>x>0.01).length;
- return {
-   setupMin,setupCount,totalRun,activeDays,
-   score: totalRun*10 - setupMin*80 - setupCount*120 - activeDays*2
- };
+ let setupMin=0,setupCount=0,totalRun=0,totalSurplus=0; const dayUse={}; DAYS.forEach(d=>dayUse[d]=0);
+ rows.forEach(r=>{const st=n(r.setup);setupMin+=st;if(st>0)setupCount++;totalRun+=n(r.minutes);totalSurplus+=n(r.surplus);dayUse[r.day]+=n(r.minutes)+st});
+ const remainingCapacity=Object.values(dayUse).reduce((a,x,i)=>a+Math.max(0,workMin(DAYS[i])-x),0);
+ return {setupMin,setupCount,totalRun,totalSurplus,activeDays:Object.values(dayUse).filter(x=>x>.01).length,remainingCapacity,score:totalRun*100-setupCount*5000-setupMin*100-totalSurplus*1000-remainingCapacity*.25};
 }
-function metrics(rows){
- const byDay={};DAYS.forEach(d=>byDay[d]={min:0,setup:0});
- rows.forEach(r=>{byDay[r.day].min+=n(r.minutes);byDay[r.day].setup+=n(r.setup)});
- let setup=0;rows.forEach(r=>setup+=n(r.setup));
- return {byDay,setup};
-}
-function renderRows(rows,title){
- const m=metrics(rows);let s=`<div class="card"><h3>${esc(title)}</h3><table><tr><th>曜日</th><th>ライン</th><th>製品</th><th>数量</th><th>実働h</th><th>段取り分</th></tr>`;
- rows.forEach(r=>s+=`<tr><td>${r.day}</td><td>${esc(r.line)}</td><td>${esc(r.product)}</td><td>${Math.round(r.qty).toLocaleString()}</td><td>${(n(r.minutes)/60).toFixed(2)}</td><td>${n(r.setup).toFixed(0)}</td></tr>`);
- s+=`</table></div>`;return s;
-}
-function summary(rows,un,title){
- const forbidden=transitions.filter(x=>x.allowed===false);
- const obj=planObjective(rows);
-
- const m=metrics(rows);let s=`<div class="card"><h3>${esc(title||"計画評価")}</h3>`;
- for(const d of DAYS){const x=m.byDay[d];if(x.min||x.setup)s+=`<div class="item"><b>${d}曜日</b>：実働 ${(x.min/60).toFixed(2)}h / 段取り ${x.setup.toFixed(0)}分</div>`}
- if(un.length)s+=`<div class="warn"><b>未充足</b><br>${un.map(x=>esc(x.name)+"："+Math.ceil(x.remain).toLocaleString()+"個").join("<br>")}</div>`;
- else s+=`<div class="ok">需要を充足しました。最低生産数量は「最低数量」であり、倍数制約として扱っていません。</div>`;
- return s+"</div>";
-}
-function planPage(){
- const r=basePlan();app.innerHTML=renderRows(r.rows,"生産案")+summary(r.rows,r.unallocated,"計画評価")+
- `<div class="card"><button class="orange" id="adj">この計画を最終調整する</button><button class="gray" id="back">戻る</button></div>`;
- document.getElementById("adj").onclick=adjustPage;document.getElementById("back").onclick=home;
-}
-
-function intent(text){
- const t=text.replace(/[　]/g," ").replace(/\\s+/g," ").trim();
- const out={raw:t,goals:[],moves:[],direct:[],questions:[]};
- const add=(g,score)=>out.goals.push({g,score});
- if(/切替|段取り|切り替え/.test(t)&&/減|少な|抑|まとめ/.test(t))add("切替・段取りを減らす",5);
- if(/まとめ|連続|連続生産|同じ製品/.test(t))add("同一製品の連続生産を優先",4);
- if(/木曜|木曜日/.test(t)&&/寄せ|前倒し|増や|多め/.test(t))add("木曜日の稼働を増やす",4);
- if(/金曜|金曜日/.test(t)&&/空け|空|減ら|少な|後ろ/.test(t))add("金曜日の生産を減らす",4);
- if(/前倒し|早め|早く/.test(t))add("可能な範囲で前倒し",3);
- if(/後ろ倒し|後ろ|遅らせ/.test(t))add("可能な範囲で後ろ倒し",3);
- if(/余剰|余り|余る/.test(t)&&/減|少な|なく/.test(t))add("余剰を減らす",5);
- if(/フル稼働|最大限|できるだけ使|有効活用/.test(t))add("稼働時間を最大限活用",5);
- if(/均等|平準化|なら/.test(t))add("日別生産量を平準化",2);
-
- const dayRe="月|火|水|木|金|土|日";
- let m;
- const re=new RegExp("("+dayRe+")(?:曜日)?の([^、。！？,， ]+)を\\s*(?:([0-9][0-9,]*)\\s*個\\s*)?(増や|増加|増産|減ら|減少|減産)","g");
- while((m=re.exec(t)))out.direct.push({day:m[1],product:m[2],qty:m[3]?n(m[3].replace(/,/g,"")):0,dir:/減/.test(m[4])?"decrease":"increase"});
- const mv=new RegExp("("+dayRe+")(?:曜日)?(?:の)?([^、。！？,， ]+)を\\s*("+dayRe+")(?:曜日)?(?:に|へ)(?:回|移|ずら|寄)","g");
- while((m=mv.exec(t)))out.moves.push({fromDay:m[1],product:m[2],toDay:m[3]});
- return out;
-}
-
 function applyIntent(base,ins){
  let rows=JSON.parse(JSON.stringify(base.rows));
  const changes=[];
@@ -456,7 +355,7 @@ function applyIntent(base,ins){
  return {rows,changes};
 }
 function adjustPage(){
- const base=basePlan();
+ let base=basePlan(); base.rows=improvePlan(base.rows); base.objective=planObjective(base.rows);
  app.innerHTML=`<div class="card"><h2>最終調整</h2>
  <div class="hint"><b>現場の言葉でそのまま入力してください。</b><br>
  例：「金曜が空いているので木曜に寄せたい」「切替が多いのでできるだけまとめたい」「bは連続して作りたい」「木曜をなるべくフル稼働にしたい」<br>
