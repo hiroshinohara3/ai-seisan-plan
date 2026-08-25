@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35（再計画エンジン再設計版）</title>
+<title>AI生産計画 v35.1（v30操作性維持・再計画エンジン再設計版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:16px}.title{font-size:20px;font-weight:800}
@@ -19,7 +19,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 </style>
 </head>
 <body>
-<header><div class="title">AI生産計画 v35（再計画エンジン再設計版）</div>
+<header><div class="title">AI生産計画 v35.1（v30操作性維持・再計画エンジン再設計版）</div>
 <div>v30を基準に、自然な現場コメントを「意図」として解釈して再計画</div></header>
 <main id="app"></main>
 <script>
@@ -127,11 +127,49 @@ function transPage(){
  document.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{transitions.splice(n(b.dataset.d),1);saveAll();transPage()});document.getElementById("back").onclick=home;
 }
 function demandPage(){
- let s=`<div class="card"><h2>需要入力</h2><div class="hint">1行につき「製品名,需要数量」。既存の需要データを読み込んで編集できます。</div><textarea id="demand">${esc(demands.map(x=>`${x.name||x.product},${x.demand??x.qty??0}`).join("\\n"))}</textarea>
- <button class="green" id="save">保存</button><button class="gray" id="back">戻る</button></div>`;app.innerHTML=s;
- document.getElementById("save").onclick=()=>{demands=document.getElementById("demand").value.split(/\\n/).map(x=>x.split(",")).filter(x=>x[0]).map(x=>({name:x[0].trim(),demand:n(x[1])}));saveAll();alert("保存しました");demandPage()};document.getElementById("back").onclick=home;
-}
+ let s=`<div class="card"><h2>需要入力</h2>
+ <div class="hint">製品ごとの需要数量を表で入力してください。プログラムやJSONの入力は不要です。</div>
+ <div id="demandRows"></div>
+ <button class="green" id="addDemand">＋製品を追加</button>
+ <button class="green" id="saveDemand">需要を保存</button>
+ <button class="gray" id="back">戻る</button></div>`;
+ app.innerHTML=s;
+ const box=document.getElementById("demandRows");
 
+ function render(){
+   if(!demands.length) demands=[{name:"",demand:0}];
+   box.innerHTML=`<div class="three"><b>製品</b><b>需要数量</b><b></b></div>`+
+     demands.map((d,i)=>`<div class="three item">
+       <input data-name="${i}" value="${esc(d.name||d.product||"")}" placeholder="例：a">
+       <input data-qty="${i}" type="number" min="0" value="${n(d.demand??d.qty)}" placeholder="需要数量">
+       <button class="red" data-del="${i}">削除</button>
+     </div>`).join("");
+   box.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
+     const i=n(b.dataset.del); demands.splice(i,1); render();
+   });
+ }
+ render();
+
+ document.getElementById("addDemand").onclick=()=>{
+   demands.push({name:"",demand:0}); render();
+   const xs=box.querySelectorAll("[data-name]"); if(xs.length) xs[xs.length-1].focus();
+ };
+ document.getElementById("saveDemand").onclick=()=>{
+   const next=[];
+   box.querySelectorAll("[data-name]").forEach(el=>{
+     const i=n(el.dataset.name);
+     const name=el.value.trim();
+     const q=box.querySelector(`[data-qty="${i}"]`);
+     const qty=n(q&&q.value);
+     if(name) next.push({name,demand:qty});
+   });
+   demands=next;
+   saveAll();
+   alert("需要を保存しました");
+   render();
+ };
+ document.getElementById("back").onclick=home;
+}
 function basePlan(){
  const rows=[],unallocated=[];
  const remaining=demands.map(d=>({name:String(d.name||d.product||""),need:n(d.demand??d.qty),remain:n(d.demand??d.qty)})).filter(x=>x.name&&x.remain>0);
