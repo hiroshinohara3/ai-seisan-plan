@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.7（稼働時間制約統合版）</title>
+<title>AI生産計画 v35.8（生産最適化エンジン版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:22px;font-weight:800;line-height:1.35}header div:last-child{margin-top:6px;font-size:14px;line-height:1.5}
@@ -15,7 +15,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 </style>
 </head>
 <body>
-<header><div class="title">AI生産計画 v35.7（稼働時間制約統合版）</div>
+<header><div class="title">AI生産計画 v35.8（生産最適化エンジン版）</div>
 <div>v30を正式基準に、稼働可能時間・段取り・最低生産数量を生産案作成エンジンへ統合</div></header>
 <main id="app"></main>
 <script>
@@ -54,7 +54,7 @@ function home(){
  app.innerHTML=`<div class="card"><h2>生産計画</h2>
  <button id="plan">需要から生産案を作成</button><button class="purple" id="eval">現在の計画を評価・不足分析</button><button class="orange" id="adj">最終調整（自然なコメントで再計画）</button></div>
  <div class="card"><h2>マスター</h2><button id="lines">ライン設定</button><button id="prods">製品設定</button><button id="trs">段取り設定</button><button id="dem">需要入力</button><button id="sch">稼働時間設定</button></div>
- <div class="card"><div class="hint"><b>v35.7の基本計画ルール</b><br>稼働可能時間を「参考値」ではなく、生産案の上限として扱います。休憩を除いた実稼働可能時間から段取り時間を差し引き、その残り時間と生産能力の範囲内だけで数量を配置します。需要未達でも計画を止めず、不足数量と不足理由を提示します。最低生産数量は倍数制約ではありません。</div></div>`;
+ <div class="card"><div class="hint"><b>v35.8の基本計画ルール</b><br>稼働可能時間を「参考値」ではなく、生産案の上限として扱います。休憩を除いた実稼働可能時間から段取り時間を差し引き、その残り時間と生産能力の範囲内だけで数量を配置します。需要未達でも計画を止めず、不足数量と不足理由を提示します。最低生産数量は倍数制約ではありません。</div></div>`;
  document.getElementById("plan").onclick=planPage;document.getElementById("eval").onclick=()=>{let p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");showPlan(p)};document.getElementById("adj").onclick=adjustPage;
  document.getElementById("lines").onclick=linesPage;document.getElementById("prods").onclick=productsPage;document.getElementById("trs").onclick=transPage;document.getElementById("dem").onclick=demandPage;document.getElementById("sch").onclick=schedulePage;
 }
@@ -104,33 +104,65 @@ function slotScore(slot,p,remaining){
  return (same?800:0) - setupMin*4 + fill*40 - split;
 }
 function generatePlan(){
- const rows=demandRows(),slots=buildSlots();
- if(!rows.length)return {out:[],analysis:analyze([],rows,slots),message:"需要を入力してください"};
- if(!lines.length)return {out:[],analysis:analyze([],rows,slots),message:"ラインを設定してください"};
- if(!slots.length)return {out:[],analysis:analyze([],rows,slots),message:"稼働可能な曜日・時間がありません"};
- // 製品ごとに、需要の大きい順だけではなく「実際に置ける枠の少ない製品」を先にする。
- const order=rows.map(r=>{let feasible=0;slots.forEach(s=>{if(cap(s.line,prod(r.product))>0)feasible++});return {...r,feasible}}).sort((a,b)=>a.feasible-b.feasible||b.qty-a.qty);
- const out=[];
- order.forEach(r=>{
-  let remain=r.qty;
-  while(remain>0){
-   let best=null;
-   slots.forEach(sl=>{const p=prod(r.product),v=slotScore(sl,p,remain);if(v>-Infinity&&(!best||v>best.score))best={sl,v,c:candidateQty(sl,p,remain)};});
-   if(!best)break;
-   const sl=best.sl,cand=best.c,q=Math.floor(cand.qty);
-   if(q<=0)break;
-   const setupMin=cand.setup.time;
-   sl.used+=setupMin+q/cand.c*60;
-   sl.last=r.product;
-   sl.rows.push({day:sl.day,line:sl.line.name,product:r.product,quantity:q,hours:q/cand.c,setupMin,slotId:sl.id});
-   out.push(sl.rows[sl.rows.length-1]);
-   remain-=q;
-   // 数量が整数で丸められて残りが極小なら終了
-   if(remain<1)remain=0;
-  }
- });
- return {out,analysis:analyze(out,rows,slots),message:""};
+ const rows=demandRows(), baseSlots=candidateSlots();
+ if(!rows.length||!lines.length||!baseSlots.length)return {out:[],analysis:{},message:"需要・ライン・稼働日を確認してください"};
+ // Build several candidate plans with different product order heuristics, then keep the best.
+ const orders=[];
+ orders.push(rows.slice().sort((a,b)=>b.qty-a.qty));
+ orders.push(rows.slice().sort((a,b)=>a.qty-b.qty));
+ orders.push(rows.slice());
+ orders.push(rows.slice().sort((a,b)=>String(a.product).localeCompare(String(b.product),'ja')));
+ orders.push(rows.slice().sort((a,b)=>{const la=lot(lines[0]||{},prod(a.product)),lb=lot(lines[0]||{},prod(b.product));return lb-la}));
+ let best=[],bestA=null,bestScore=-Infinity;
+ for(const order of orders){
+   const slots=baseSlots.map(s=>({...s,used:0,last:""})),out=[];
+   for(const r of order){
+     let remain=r.qty,p=prod(r.product);
+     while(remain>0){
+       let choices=[];
+       slots.forEach(sl=>{
+         const c=cap(sl.line,p); if(c<=0)return;
+         const st=setup(sl.line,sl.last,r.product); if(!st.allowed)return;
+         const setupH=st.time/60;
+         const free=Math.max(0,sl.available-sl.used-setupH);
+         if(free<=0)return;
+         const maxQ=free*c;
+         // Prefer same-product continuation, less setup, and a good use of the remaining window.
+         const q=Math.min(remain,maxQ);
+         const remainingAfter=free-q/c;
+         const continuity=sl.last===r.product?500:0;
+         const setupPenalty=st.time*8;
+         const fragmentationPenalty=(remain>q+0.0001)?20:0;
+         const unusedPenalty=remainingAfter*0.15;
+         choices.push({sl,c,st,q,val:continuity-setupPenalty-fragmentationPenalty-unusedPenalty});
+       });
+       if(!choices.length)break;
+       choices.sort((a,b)=>b.val-a.val);
+       const z=choices[0],sl=z.sl;
+       // Minimum production quantity is a minimum for a production run, not a multiple constraint.
+       // If the remaining demand is below the minimum, produce the remaining demand.
+       let q=z.q;
+       const minQ=lot(sl.line,p);
+       if(q<minQ && remain>minQ && minQ<=z.q)q=minQ;
+       q=Math.min(q,remain,z.q);
+       if(q<=0)break;
+       out.push({day:sl.day,line:sl.line.name,product:r.product,quantity:q,hours:q/z.c,setupMin:z.st.time});
+       sl.used+=q/z.c+z.st.time/60; sl.last=r.product; remain-=q;
+     }
+   }
+   const a=analyze(out,rows,slots),sc=optimizationScore(a,out,rows);
+   if(sc>bestScore){best=out;bestA=a;bestScore=sc}
+ }
+ return {out:best,analysis:bestA||analyze(best,rows,baseSlots)};
 }
+function optimizationScore(a,plan,rows){
+ const shortage=a.totalShort, surplus=a.totalSurplus, setup=a.day?Object.values(a.day).reduce((x,d)=>x+d.setup,0):0;
+ const switches=Math.max(0,plan.length-1);
+ const sameContinuity=plan.reduce((v,x,i)=>v+(i>0&&plan[i-1].line===x.line&&plan[i-1].product===x.product?1:0),0);
+ // Demand fulfillment dominates. Then surplus, setup/switches, and unused capacity.
+ return -shortage*100000 - surplus*100 - setup*10 - switches*2 + sameContinuity*8 - a.remainingHours*0.05;
+}
+
 function analyze(plan,rows,slots){
  const byProd={};rows.forEach(r=>byProd[r.product]={demand:r.qty,production:0});
  plan.forEach(x=>{if(!byProd[x.product])byProd[x.product]={demand:0,production:0};byProd[x.product].production+=n(x.quantity)});
