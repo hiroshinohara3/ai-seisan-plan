@@ -45,7 +45,7 @@ function cap(line,p){return n(p.capacityOverride)||n(line.capacity)||0}
 function lot(line,p){return n(p.minLotOverride)||n(line.lot)||0}
 function setup(line,from,to){
  if(!from||from===to)return {time:0,allowed:true};
- let r=transitions.find(x=>(!x.line||x.line===line)&&x.from===from&&x.to===to);
+ const r=transitions.find(x=>(!x.line||x.line===line.name||x.line===line)&&x.from===from&&x.to===to);
  if(!r)return {time:0,allowed:true};
  return {time:r.allowed===false?Infinity:n(r.time),allowed:r.allowed!==false};
 }
@@ -104,41 +104,57 @@ function slotScore(slot,p,remaining){
  return (same?800:0) - setupMin*4 + fill*40 - split;
 }
 function generatePlan(){
- const rows=demandRows(),slots=buildSlots();
- if(!rows.length)return {out:[],analysis:analyze([],rows,slots),message:"需要を入力してください"};
- if(!lines.length)return {out:[],analysis:analyze([],rows,slots),message:"ラインを設定してください"};
- if(!slots.length)return {out:[],analysis:analyze([],rows,slots),message:"稼働可能な曜日・時間がありません"};
- // v35.7を正式な基準エンジンとして使用。最適化の追加はこの土台を壊さない範囲で行う。
- const order=rows.map(r=>{let feasible=0;slots.forEach(s=>{if(cap(s.line,prod(r.product))>0)feasible++});return {...r,feasible}}).sort((a,b)=>a.feasible-b.feasible||b.qty-a.qty);
- const out=[];
- order.forEach(r=>{
-  let remain=r.qty;
-  while(remain>0){
-   let best=null;
-   slots.forEach(sl=>{const p=prod(r.product),v=slotScore(sl,p,remain);if(v>-Infinity&&(!best||v>best.score))best={sl,v,c:candidateQty(sl,p,remain)};});
-   if(!best)break;
-   const sl=best.sl,cand=best.c,q=Math.floor(cand.qty);
-   if(q<=0)break;
-   const setupMin=cand.setup.time;
-   sl.used+=setupMin+q/cand.c*60;
-   sl.last=r.product;
-   sl.rows.push({day:sl.day,line:sl.line.name,product:r.product,quantity:q,hours:q/cand.c,setupMin,slotId:sl.id});
-   out.push(sl.rows[sl.rows.length-1]);
-   remain-=q;
-   if(remain<1)remain=0;
-  }
- });
- return {out,analysis:analyze(out,rows,slots),message:""};
+ const rows=demandRows(), baseSlots=buildSlots();
+ if(!rows.length)return{out:[],analysis:analyze([],rows,baseSlots),message:"需要を入力してください"};
+ if(!lines.length)return{out:[],analysis:analyze([],rows,baseSlots),message:"ラインを設定してください"};
+ if(!baseSlots.length)return{out:[],analysis:analyze([],rows,baseSlots),message:"稼働可能な曜日・時間がありません"};
+ const orderings=[];
+ orderings.push(rows.slice().sort((a,b)=>b.qty-a.qty));
+ orderings.push(rows.slice().sort((a,b)=>{
+   const fa=baseSlots.filter(s=>cap(s.line,prod(a.product))>0).length;
+   const fb=baseSlots.filter(s=>cap(s.line,prod(b.product))>0).length;
+   return fa-fb||b.qty-a.qty;
+ }));
+ orderings.push(rows.slice().sort((a,b)=>String(a.product).localeCompare(String(b.product),"ja")));
+ function build(order){
+   const slots=baseSlots.map(s=>({...s,used:0,last:""})),out=[];
+   for(const r of order){
+     let remain=r.qty,p=prod(r.product);
+     while(remain>0){
+       let best=null;
+       for(const sl of slots){
+         const c=cap(sl.line,p); if(c<=0)continue;
+         const st=setup(sl.line,sl.last,r.product); if(!st.allowed)continue;
+         const free=Math.max(0,sl.available-sl.used-st.time);
+         const maxQty=free*c/60; if(maxQty<=0)continue;
+         const L=lot(sl.line,p);
+         if(L>0 && maxQty<L)continue;
+         if(L>0 && remain<L)continue;
+         let q=Math.min(remain,maxQty); q=Math.floor(q); if(q<=0)continue;
+         const same=sl.last===r.product;
+         const fill=(sl.used+st.time+q/c*60)/sl.available;
+         const score=(same?10000:0)-st.time*20+fill*50+(q/remain)*100;
+         if(!best||score>best.score)best={sl,st,c,q,score};
+       }
+       if(!best)break;
+       best.sl.used+=best.st.time+best.q/best.c*60;
+       best.sl.last=r.product;
+       out.push({day:best.sl.day,line:best.sl.line.name,product:r.product,quantity:best.q,hours:best.q/best.c,setupMin:best.st.time});
+       remain-=best.q;
+     }
+   }
+   return{out,slots};
+ }
+ let best=null,bestScore=-Infinity;
+ for(const order of orderings){
+   const candidate=build(order),a=analyze(candidate.out,rows,candidate.slots);
+   const setupMin=candidate.out.reduce((x,y)=>x+n(y.setupMin),0);
+   const switches=Math.max(0,candidate.out.length-1);
+   const score=-a.totalShort*100000-a.totalSurplus*100-setupMin*10-switches;
+   if(score>bestScore){bestScore=score;best={out:candidate.out,analysis:a}}
+ }
+ return{out:best.out,analysis:best.analysis,message:""};
 }
-
-function optimizationScore(a,plan,rows){
- const shortage=a.totalShort, surplus=a.totalSurplus, setup=a.day?Object.values(a.day).reduce((x,d)=>x+d.setup,0):0;
- const switches=Math.max(0,plan.length-1);
- const sameContinuity=plan.reduce((v,x,i)=>v+(i>0&&plan[i-1].line===x.line&&plan[i-1].product===x.product?1:0),0);
- // Demand fulfillment dominates. Then surplus, setup/switches, and unused capacity.
- return -shortage*100000 - surplus*100 - setup*10 - switches*2 + sameContinuity*8 - a.remainingHours*0.05;
-}
-
 function analyze(plan,rows,slots){
  const byProd={};rows.forEach(r=>byProd[r.product]={demand:r.qty,production:0});
  plan.forEach(x=>{if(!byProd[x.product])byProd[x.product]={demand:0,production:0};byProd[x.product].production+=n(x.quantity)});
