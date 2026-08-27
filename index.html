@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.11（需要充足・最終数量修正版）</title>
+<title>AI生産計画 v35.12（需要充足・最終数量修正版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:22px;font-weight:800;line-height:1.35}
@@ -22,7 +22,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 </head>
 <body>
 <header>
-  <div class="title">AI生産計画 v35.11</div>
+  <div class="title">AI生産計画 v35.12</div>
   <div>v30基準・稼働時間／段取り／最低生産数量を守り、需要を満たせる計画を優先</div>
 </header>
 <main id="app"></main>
@@ -84,7 +84,7 @@ function buildSlots(){
 }
 
 /*
-  v35.11 根本修正
+  v35.12 根本修正
   ----------------
   旧ロジックは「残需要 < 最低生産数量」の時点で候補を捨てていた。
   しかし最低生産数量はロット倍数ではなく、最終回の残需要まで切り上げる制約でもない。
@@ -347,9 +347,85 @@ function planPage(){
 }
 
 
-function buildConfigExport(){return {schema:"ai-seisan-plan-config",schemaVersion:1,exportedAt:new Date().toISOString(),appVersion:"v35.11",settings:{lines:load(K.lines,[]),products:load(K.products,[]),transitions:load(K.trans,[]),schedules:load(K.schedules,[])}};}
-function downloadConfig(){const blob=new Blob([JSON.stringify(buildConfigExport(),null,2)],{type:"application/json"});const u=URL.createObjectURL(blob);const a=document.createElement("a");a.href=u;a.download="ai_seisan_plan_config_v35.11.json";document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(u);}
-function configPage(){app.innerHTML=`<div class="card"><h2>計画条件を共有</h2><div class="hint"><b>ChatGPTへ渡すための設定ファイルを作成します。</b><br>ライン・製品・段取り・稼働時間のみを出力し、需要と過去計画は含めません。</div><button class="green" id="export">計画条件をファイルに出力</button><button class="gray" id="back">戻る</button></div>`;document.getElementById("export").onclick=downloadConfig;document.getElementById("back").onclick=home;}
+
+function buildPlanExport(){
+  const startDate=(document.getElementById("planStart")||{}).value||"";
+  const endDate=(document.getElementById("planEnd")||{}).value||"";
+  const planId=(document.getElementById("planId")||{}).value||"";
+  const demandText=(document.getElementById("planDemand")||{}).value||"";
+  let demand=[];
+  if(demandText.trim()){
+    demand=demandText.split(/\n/).map(x=>x.trim()).filter(Boolean).map(line=>{
+      const p=line.split(/[,，\t ]+/).filter(Boolean);
+      return {product:p[0]||"",quantity:Number(p[1]||0)};
+    }).filter(x=>x.product&&Number.isFinite(x.quantity));
+  }
+  return {
+    schema:"ai-seisan-plan-data",
+    schemaVersion:2,
+    exportedAt:new Date().toISOString(),
+    appVersion:"v35.12",
+    plan:{
+      id:planId,
+      startDate,
+      endDate,
+      periodType:(startDate&&endDate)?"custom":"unspecified",
+      demand,
+      weeklyDemand:[],
+      dailyDemand:[],
+      temporaryConstraints:[],
+      recurringConstraints:[]
+    },
+    settings:{
+      lines:load(K.lines,[]),
+      products:load(K.products,[]),
+      transitions:load(K.trans,[]),
+      schedules:load(K.schedules,[])
+    }
+  };
+}
+function downloadPlanData(){
+  const data=JSON.stringify(buildPlanExport(),null,2);
+  const blob=new Blob([data],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="ai_seisan_plan_data_v35.12.json";
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+}
+function importPlanDataText(text){
+  let o;
+  try{o=JSON.parse(text)}catch(e){throw new Error("計画データのJSONを読み込めませんでした。")}
+  if(!o || o.schema!=="ai-seisan-plan-data") throw new Error("このアプリ用の計画データではありません。");
+  const p=o.plan||{}, s=o.settings||{};
+  if(!p.startDate||!p.endDate) throw new Error("計画期間（開始日・終了日）がありません。");
+  if(!Array.isArray(p.demand)||!Array.isArray(s.lines)||!Array.isArray(s.products)||!Array.isArray(s.transitions)||!Array.isArray(s.schedules))
+    throw new Error("需要・ライン・製品・段取り・稼働時間の設定が揃っていません。");
+  save(K.lines,s.lines);save(K.products,s.products);save(K.trans,s.transitions);save(K.schedules,s.schedules);
+  if(Array.isArray(p.temporaryConstraints)) localStorage.setItem("ai_plan_temp_constraints",JSON.stringify(p.temporaryConstraints));
+  if(Array.isArray(p.recurringConstraints)) localStorage.setItem("ai_plan_recurring_constraints",JSON.stringify(p.recurringConstraints));
+}
+function configPage(){
+  app.innerHTML=`<div class="card"><h2>計画データを共有</h2>
+  <div class="exportbox"><b>計画期間＋需要＋計画条件を1つにまとめます</b><br>
+  1週間だけでなく、1か月など任意の期間を指定できます。期間情報と計画IDを付けて、ChatGPTで「今回の計画」として扱える形式にします。
+  </div>
+  <label class="item"><b>計画ID</b><input id="planId" placeholder="例：2026-W36"></label>
+  <label class="item"><b>計画期間</b><div style="display:flex;gap:8px"><input id="planStart" type="date"><span>〜</span><input id="planEnd" type="date"></div></label>
+  <label class="item"><b>需要（製品名 数量）</b><textarea id="planDemand" rows="6" placeholder="例：&#10;a 60000&#10;b 30000"></textarea></label>
+  <button class="green" id="export">計画データをファイルに出力</button>
+  <label class="item"><b>計画データファイルを読み込む</b><input id="file" type="file" accept=".json,application/json"></label>
+  <div class="hint">読み込むと計画条件を更新します。計画期間・需要・今回だけの制約・継続条件を別管理できる形式です。新しい計画期間を読み込んだとき、前の期間固有の制約を自動的に引き継がない設計です。</div>
+  <button class="gray" id="back">戻る</button></div>`;
+  document.getElementById("export").onclick=downloadPlanData;
+  document.getElementById("file").onchange=async e=>{
+    const f=e.target.files[0];if(!f)return;
+    try{importPlanDataText(await f.text());alert("計画データを読み込みました。");configPage()}
+    catch(err){alert(err.message||"読み込みに失敗しました。")}
+  };
+  document.getElementById("back").onclick=home;
+}
+
 function home(){
   app.innerHTML=`<div class="card"><h2>生産計画</h2>
   <button id="plan">需要から生産案を作成</button>
@@ -359,7 +435,7 @@ function home(){
   <div class="card"><h2>設定</h2>
   <button id="dem">需要入力</button><button id="lines">ライン設定</button><button id="products">製品設定</button>
   <button id="trans">段取り設定</button><button id="sched">稼働時間設定</button><button id="config">計画条件を共有</button></div>
-  <div class="card"><div class="hint"><b>v35.11の基本計画原則</b><br>
+  <div class="card"><div class="hint"><b>v35.12の基本計画原則</b><br>
   ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。</div></div>`;
   document.getElementById("plan").onclick=planPage;
   document.getElementById("eval").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");showPlan(p)};
