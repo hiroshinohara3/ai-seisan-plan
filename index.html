@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.13（需要充足・最終数量修正版）</title>
+<title>AI生産計画 v35.14（需要充足・最終数量修正版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:22px;font-weight:800;line-height:1.35}
@@ -19,10 +19,22 @@ textarea{min-height:110px}.row{display:grid;grid-template-columns:1fr 1fr;gap:8p
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #e5e7eb;padding:7px;text-align:right}th:first-child,td:first-child{text-align:left}
 .metric{font-size:22px;font-weight:800}.scroll{overflow-x:auto}.tag{display:inline-block;padding:3px 7px;border-radius:8px;background:#eef2ff;color:#3730a3;font-size:11px;margin:2px}
 </style>
-</head>
+<style id="v3514-demand-style">
+.choicegrid{display:flex;gap:24px;flex-wrap:wrap;margin-top:10px}
+.choicegrid label{display:flex;align-items:center;gap:8px;font-size:18px}
+.dategrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.dategrid label{display:flex;flex-direction:column;gap:7px}
+.dategrid input{width:100%;box-sizing:border-box}
+.demandweek{border:1px solid #d9dde5;border-radius:18px;padding:16px;margin:14px 0;background:#fff}
+.demandweek h3{margin:0 0 12px;font-size:21px}
+.demandrow{display:grid;grid-template-columns:minmax(80px,1fr) minmax(140px,1fr);align-items:center;gap:14px;margin:10px 0}
+.demandrow span{font-size:18px;font-weight:600}
+.demandrow input{box-sizing:border-box;width:100%;min-width:0}
+@media(max-width:520px){.dategrid{grid-template-columns:1fr}.demandrow{grid-template-columns:80px 1fr}}
+</style></head>
 <body>
 <header>
-  <div class="title">AI生産計画 v35.13</div>
+  <div class="title">AI生産計画 v35.14</div>
   <div>v30基準・稼働時間／段取り／最低生産数量を守り、需要を満たせる計画を優先</div>
 </header>
 <main id="app"></main>
@@ -84,7 +96,7 @@ function buildSlots(){
 }
 
 /*
-  v35.13 根本修正
+  v35.14 根本修正
   ----------------
   旧ロジックは「残需要 < 最低生産数量」の時点で候補を捨てていた。
   しかし最低生産数量はロット倍数ではなく、最終回の残需要まで切り上げる制約でもない。
@@ -356,7 +368,7 @@ function buildPlanExport(){
   }else{
     weeklyDemand.push({weekNo:1,startDate:meta.start||"",endDate:meta.end||"",demand:products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)}))});
   }
-  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.13",
+  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.14",
     plan:{id:meta.mode==="monthly"?`MONTH-${meta.start}-${meta.end}`:`WEEK-${new Date().toISOString().slice(0,10)}`,startDate:meta.start,endDate:meta.end,periodType:meta.mode,
       demand:meta.mode==="weekly"?products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)})):[],
       weeklyDemand,dailyDemand:[],temporaryConstraints:[],recurringConstraints:[]},
@@ -369,7 +381,7 @@ function downloadPlanData(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
   a.href=url;
-  a.download="ai_seisan_plan_data_v35.13.json";
+  a.download="ai_seisan_plan_data_v35.14.json";
   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
 }
 function importPlanDataText(text){
@@ -414,7 +426,7 @@ function home(){
   <div class="card"><h2>設定</h2>
   <button id="dem">需要入力</button><button id="lines">ライン設定</button><button id="products">製品設定</button>
   <button id="trans">段取り設定</button><button id="sched">稼働時間設定</button><button id="config">計画条件を共有</button></div>
-  <div class="card"><div class="hint"><b>v35.13の基本計画原則</b><br>
+  <div class="card"><div class="hint"><b>v35.14の基本計画原則</b><br>
   ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。</div></div>`;
   document.getElementById("plan").onclick=planPage;
   document.getElementById("eval").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");showPlan(p)};
@@ -428,42 +440,104 @@ function sundayOfMonday(m){const x=new Date(m);x.setDate(x.getDate()+6);return x
 function isoDate(d){return d.toISOString().slice(0,10)}
 function formatJP(d){return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`}
 function weekRanges(start,end){const s=mondayOf(start),out=[];const last=new Date(end+"T23:59:59");while(s<=last){const e=sundayOfMonday(s);out.push({start:isoDate(s),end:isoDate(e)});s.setDate(s.getDate()+7)}return out}
+function mondayOf(s){
+  const d=new Date(s+"T00:00:00"); if(Number.isNaN(d.getTime())) return null;
+  const day=d.getDay(); d.setDate(d.getDate()+(day===0?-6:1-day)); return d;
+}
+function sundayOfMonday(d){const x=new Date(d);x.setDate(x.getDate()+6);return x;}
+function isoDate(d){return d.toISOString().slice(0,10);}
+function jpDate(d){return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;}
+function weekRanges(start,end){
+  const s=mondayOf(start), e=new Date(end+"T00:00:00"), out=[];
+  if(!s||Number.isNaN(e.getTime())||s>e)return out;
+  for(let d=new Date(s);d<=e;d.setDate(d.getDate()+7)){
+    const wEnd=sundayOfMonday(d); if(wEnd>e) wEnd.setTime(e.getTime());
+    out.push({start:isoDate(d),end:isoDate(wEnd)});
+  }
+  return out;
+}
+function currentDemandMeta(){return load(K.planMeta,{mode:"weekly",start:"",end:""});}
+
 function demandPage(){
-  const meta=load(K.planMeta,{mode:"weekly",start:"",end:""}), wd=load(K.weeklyDem,{});
+  const meta=currentDemandMeta();
   app.innerHTML=`<div class="card"><h2>需要入力</h2>
-  <div class="item"><b>計画方式</b><br>
-  <label><input type="radio" name="mode" value="weekly" ${meta.mode!=="monthly"?"checked":""}> 週次</label>
-  <label><input type="radio" name="mode" value="monthly" ${meta.mode==="monthly"?"checked":""}> 月次</label></div>
+  <div class="item"><b>計画方式</b>
+    <div class="choicegrid">
+      <label><input type="radio" name="mode" value="weekly" ${meta.mode!=="monthly"?"checked":""}> 週次</label>
+      <label><input type="radio" name="mode" value="monthly" ${meta.mode==="monthly"?"checked":""}> 月次</label>
+    </div>
+  </div>
   <div id="periodBox"></div><div id="demandBox"></div>
-  <button class="green" id="saveDemand">保存</button><button class="gray" id="back">戻る</button></div>`;
-  const render=()=>{
-    const mode=document.querySelector('input[name="mode"]:checked').value;
-    const m=load(K.planMeta,{mode,start:"",end:""});
-    let h="";
-    if(mode==="monthly")h=`<div class="hint">期間を指定すると、月曜〜日曜を1週として自動分割します。開始日・終了日が週途中でも、指定期間内を計画対象として扱います。</div><div class="row"><label>開始日<input id="startDate" type="date" value="${esc(m.start||"")}"></label><label>終了日<input id="endDate" type="date" value="${esc(m.end||"")}"></label></div>`;
-    else h=`<div class="hint">1週間分の需要だけ入力します。製品は製品設定から自動表示されます。</div>`;
-    document.getElementById("periodBox").innerHTML=h;
-    const start=mode==="monthly"?document.getElementById("startDate")?.value:"", end=mode==="monthly"?document.getElementById("endDate")?.value:"";
-    const weeks=mode==="monthly"&&start&&end&&start<=end?weekRanges(start,end):[{start:"",end:""}];
+  <button class="green" id="saveDemand">保存</button>
+  <button class="gray" id="back">戻る</button></div>`;
+
+  const renderDemand=(weeks,mode)=>{
+    const wd=load(K.weeklyDem,{});
     let body="";
     weeks.forEach((w,i)=>{
-      body+=`<div class="item"><b>${mode==="monthly"?`${i+1}週目：${formatJP(new Date(w.start+"T00:00:00"))}〜${formatJP(new Date(w.end+"T00:00:00"))}`:"対象週"}</b>`;
-      products.forEach(p=>{const key=mode==="monthly"?`${w.start}_${p.name}`:p.name;const val=n(wd[key]??(mode==="weekly"?(demands.find(d=>d.product===p.name)?.quantity||0):0));body+=`<label>${esc(p.name)}<input type="number" min="0" step="1" data-d="${esc(key)}" value="${val}"></label>`});
-      body+=`</div>`;
+      const title=mode==="monthly"
+        ? `${i+1}週目　${jpDate(new Date(w.start+"T00:00:00"))} ～ ${jpDate(new Date(w.end+"T00:00:00"))}`
+        : "対象週";
+      body+=`<section class="demandweek"><h3>${title}</h3>`;
+      products.forEach(p=>{
+        const key=mode==="monthly"?`${w.start}_${p.name}`:p.name;
+        const old=wd[key] ?? (mode==="weekly"?(demands.find(x=>x.product===p.name)?.quantity||0):0);
+        body+=`<label class="demandrow"><span>${esc(p.name)}</span><input type="number" min="0" step="1" inputmode="numeric" data-demand-key="${esc(key)}" value="${n(old)}"></label>`;
+      });
+      body+=`</section>`;
     });
     document.getElementById("demandBox").innerHTML=products.length?body:`<div class="warn">先に製品設定で製品を登録してください。</div>`;
   };
-  document.querySelectorAll('input[name="mode"]').forEach(r=>r.onchange=render);
-  document.getElementById("periodBox").onchange=render;
+
+  const render=()=>{
+    const mode=document.querySelector('input[name="mode"]:checked').value;
+    const old=currentDemandMeta();
+    if(mode==="weekly"){
+      document.getElementById("periodBox").innerHTML=`<div class="hint">1週間分の需要を、登録済みの製品ごとに入力します。</div>`;
+      renderDemand([{start:"",end:""}],mode);
+      return;
+    }
+    document.getElementById("periodBox").innerHTML=`<div class="hint">開始日・終了日をカレンダーから選択してください。月次では月曜日～日曜日を1週として自動分割します。</div>
+      <div class="dategrid">
+        <label><b>開始日</b><input id="startDate" type="date" value="${esc(old.start||"")}"></label>
+        <label><b>終了日</b><input id="endDate" type="date" value="${esc(old.end||"")}"></label>
+      </div>
+      <div id="weekStatus" class="hint">開始日と終了日を選択すると、週別入力欄が表示されます。</div>`;
+    const updateWeeks=()=>{
+      const s=document.getElementById("startDate").value,e=document.getElementById("endDate").value;
+      if(!s||!e){document.getElementById("weekStatus").textContent="開始日と終了日を選択してください。";document.getElementById("demandBox").innerHTML="";return;}
+      if(s>e){document.getElementById("weekStatus").textContent="終了日は開始日以降にしてください。";document.getElementById("demandBox").innerHTML="";return;}
+      const weeks=weekRanges(s,e);
+      document.getElementById("weekStatus").textContent=`全${weeks.length}週の需要を入力できます。`;
+      renderDemand(weeks,mode);
+    };
+    document.getElementById("startDate").addEventListener("change",updateWeeks);
+    document.getElementById("endDate").addEventListener("change",updateWeeks);
+    if(old.start&&old.end) updateWeeks();
+  };
+
+  document.querySelectorAll('input[name="mode"]').forEach(r=>r.addEventListener("change",render));
   document.getElementById("saveDemand").onclick=()=>{
-    const mode=document.querySelector('input[name="mode"]:checked').value,start=mode==="monthly"?document.getElementById("startDate")?.value:"",end=mode==="monthly"?document.getElementById("endDate")?.value:"";
-    if(mode==="monthly"&&(!start||!end||start>end))return alert("月次の開始日・終了日を正しく指定してください。");
-    const vals={};document.querySelectorAll("[data-d]").forEach(el=>vals[el.dataset.d]=n(el.value));
-    save(K.weeklyDem,vals);save(K.planMeta,{mode,start,end});
-    if(mode==="weekly"){demands=products.map(p=>({product:p.name,quantity:vals[p.name]||0})).filter(x=>x.quantity>0);save(K.dem,demands)}else{demands=[];save(K.dem,[])}
+    const mode=document.querySelector('input[name="mode"]:checked').value;
+    const start=mode==="monthly"?document.getElementById("startDate")?.value:"";
+    const end=mode==="monthly"?document.getElementById("endDate")?.value:"";
+    if(mode==="monthly"&&(!start||!end||start>end)){alert("月次の開始日・終了日を正しく指定してください。");return;}
+    const wd={};
+    document.querySelectorAll("[data-demand-key]").forEach(el=>wd[el.dataset.demandKey]=n(el.value));
+    if(mode==="weekly"){
+      demands=products.map(p=>({product:p.name,quantity:n(wd[p.name]||0)})).filter(x=>x.quantity>0);
+      save(K.dem,demands);
+    }else{
+      save(K.dem,[]);
+      weekRanges(start,end).forEach(w=>products.forEach(p=>{
+        const k=`${w.start}_${p.name}`; if(wd[k]===undefined)wd[k]=0;
+      }));
+    }
+    save(K.weeklyDem,wd);save(K.planMeta,{mode,start,end});
     alert("需要を保存しました。");
   };
-  document.getElementById("back").onclick=home;render();
+  document.getElementById("back").onclick=home;
+  render();
 }
 function linesPage(){
   let h=`<div class="card"><h2>ライン設定</h2>`;
