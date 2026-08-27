@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.14（需要充足・最終数量修正版）</title>
+<title>AI生産計画 v35.15（需要充足・最終数量修正版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:22px;font-weight:800;line-height:1.35}
@@ -31,17 +31,21 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 .demandrow span{font-size:18px;font-weight:600}
 .demandrow input{box-sizing:border-box;width:100%;min-width:0}
 @media(max-width:520px){.dategrid{grid-template-columns:1fr}.demandrow{grid-template-columns:80px 1fr}}
+</style><style id="v3515-material-style">
+.materialgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:10px}
+.materialcheck{display:flex;align-items:center;gap:8px;border:1px solid #e5e7eb;border-radius:10px;padding:9px}
+.materialcheck input{width:auto;margin:0}.matrixbtn{width:100%;font-size:12px;padding:8px;margin:0;background:#2563eb}.scroll table{min-width:560px}
 </style></head>
 <body>
 <header>
-  <div class="title">AI生産計画 v35.14</div>
+  <div class="title">AI生産計画 v35.15</div>
   <div>v30基準・稼働時間／段取り／最低生産数量を守り、需要を満たせる計画を優先</div>
 </header>
 <main id="app"></main>
 <script>
 "use strict";
 const DAYS=["月","火","水","木","金","土","日"];
-const K={lines:"aiSeisan_lines",products:"aiSeisan_products",trans:"aiSeisan_transitionRules",dem:"aiSeisan_planItems",schedules:"aiSeisan_schedules",last:"aiSeisan_lastPlan"};
+const K={lines:"aiSeisan_lines",products:"aiSeisan_products",trans:"aiSeisan_transitionRules",dem:"aiSeisan_planItems",schedules:"aiSeisan_schedules",last:"aiSeisan_lastPlan",planMeta:"aiSeisan_planMeta",weeklyDem:"aiSeisan_weeklyDemand",materials:"aiSeisan_materials"};
 const app=document.getElementById("app");
 const load=(k,d=[])=>{try{const x=localStorage.getItem(k);return x?JSON.parse(x):d}catch(e){return d}};
 const save=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
@@ -51,7 +55,8 @@ const fmt=v=>Math.round(n(v)*100)/100;
 const esc=s=>String(s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
 
 let lines=load(K.lines,[]).map(x=>({...x,name:String(x.name||x.lineName||""),capacity:n(x.capacity??x.hourCapacity),lot:n(x.lot??x.minLot),workers:n(x.workers??x.personnel)})).filter(x=>x.name);
-let products=load(K.products,[]).map(x=>({...x,name:String(x.name||x.product||""),capacityOverride:n(x.capacityOverride),minLotOverride:n(x.minLotOverride)})).filter(x=>x.name);
+let materials=load(K.materials,[]).map(x=>({...x,name:String(x.name||x.material||"").trim()})).filter(x=>x.name);
+let products=load(K.products,[]).map(x=>({...x,name:String(x.name||x.product||""),capacityOverride:n(x.capacityOverride),minLotOverride:n(x.minLotOverride),materialIds:Array.isArray(x.materialIds)?x.materialIds:[]})).filter(x=>x.name);
 let transitions=load(K.trans,[]).map(x=>({...x,allowed:x.allowed!==false,time:n(x.time)}));
 let demands=load(K.dem,[]);
 let schedules=load(K.schedules,[]);
@@ -73,11 +78,25 @@ function workMin(d){
 function prod(name){return products.find(p=>p.name===name)||{name,capacityOverride:0,minLotOverride:0}}
 function cap(line,p){return n(p.capacityOverride)||n(line.capacity)||0}
 function lot(line,p){return n(p.minLotOverride)||n(line.lot)||0}
+function materialNames(productName){
+  const p=prod(productName);
+  return (p.materialIds||[]).map(id=>materials.find(m=>m.id===id||m.name===id)?.name||id).filter(Boolean);
+}
 function setup(line,from,to){
   if(!from||from===to)return {time:0,allowed:true};
-  const r=transitions.find(x=>(!x.line||x.line===line.name||x.line===line)&&x.from===from&&x.to===to);
-  if(!r)return {time:0,allowed:true};
-  return {time:r.allowed===false?Infinity:n(r.time),allowed:r.allowed!==false};
+  // Legacy/product-specific rule has priority.
+  const direct=transitions.find(x=>(!x.line||x.line===line.name||x.line===line)&&x.from===from&&x.to===to&&!x.materialFrom&&!x.materialTo);
+  if(direct)return {time:direct.allowed===false?Infinity:n(direct.time),allowed:direct.allowed!==false};
+  const fm=materialNames(from), tm=materialNames(to);
+  if(!fm.length||!tm.length)return {time:0,allowed:true};
+  const rules=[];
+  fm.forEach(a=>tm.forEach(b=>{
+    const r=transitions.find(x=>(!x.line||x.line===line.name||x.line===line)&&x.materialFrom===a&&x.materialTo===b);
+    if(r)rules.push(r);
+  }));
+  if(!rules.length)return {time:0,allowed:true};
+  if(rules.some(r=>r.allowed===false))return {time:Infinity,allowed:false};
+  return {time:Math.max(...rules.map(r=>n(r.time))),allowed:true};
 }
 function demandRows(){
   return demands.map((d,i)=>({i,product:String(d.product||d.name||d.productName||"").trim(),qty:n(d.quantity??d.qty??d.demand??d.amount)}))
@@ -96,7 +115,7 @@ function buildSlots(){
 }
 
 /*
-  v35.14 根本修正
+  v35.15 根本修正
   ----------------
   旧ロジックは「残需要 < 最低生産数量」の時点で候補を捨てていた。
   しかし最低生産数量はロット倍数ではなく、最終回の残需要まで切り上げる制約でもない。
@@ -368,11 +387,11 @@ function buildPlanExport(){
   }else{
     weeklyDemand.push({weekNo:1,startDate:meta.start||"",endDate:meta.end||"",demand:products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)}))});
   }
-  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.14",
+  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.15",
     plan:{id:meta.mode==="monthly"?`MONTH-${meta.start}-${meta.end}`:`WEEK-${new Date().toISOString().slice(0,10)}`,startDate:meta.start,endDate:meta.end,periodType:meta.mode,
       demand:meta.mode==="weekly"?products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)})):[],
       weeklyDemand,dailyDemand:[],temporaryConstraints:[],recurringConstraints:[]},
-    settings:{lines:load(K.lines,[]),products:load(K.products,[]),transitions:load(K.trans,[]),schedules:load(K.schedules,[])}};
+    settings:{lines:load(K.lines,[]),products:load(K.products,[]),transitions:load(K.trans,[]),schedules:load(K.schedules,[]),materials:load(K.materials,[])}};
 }
 
 function downloadPlanData(){
@@ -381,7 +400,7 @@ function downloadPlanData(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
   a.href=url;
-  a.download="ai_seisan_plan_data_v35.14.json";
+  a.download="ai_seisan_plan_data_v35.15.json";
   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
 }
 function importPlanDataText(text){
@@ -392,7 +411,7 @@ function importPlanDataText(text){
   if(!p.startDate||!p.endDate) throw new Error("計画期間（開始日・終了日）がありません。");
   if(!Array.isArray(p.demand)||!Array.isArray(s.lines)||!Array.isArray(s.products)||!Array.isArray(s.transitions)||!Array.isArray(s.schedules))
     throw new Error("需要・ライン・製品・段取り・稼働時間の設定が揃っていません。");
-  save(K.lines,s.lines);save(K.products,s.products);save(K.trans,s.transitions);save(K.schedules,s.schedules);
+  save(K.lines,s.lines);save(K.products,s.products);save(K.trans,s.transitions);save(K.schedules,s.schedules);if(Array.isArray(s.materials))save(K.materials,s.materials);
   if(Array.isArray(p.temporaryConstraints)) localStorage.setItem("ai_plan_temp_constraints",JSON.stringify(p.temporaryConstraints));
   if(Array.isArray(p.recurringConstraints)) localStorage.setItem("ai_plan_recurring_constraints",JSON.stringify(p.recurringConstraints));
 }
@@ -424,15 +443,15 @@ function home(){
   <button class="orange" id="diag">計画の実行可能性を診断</button>
   <button class="orange" id="adj">最終調整（自然なコメントで再計画）</button></div>
   <div class="card"><h2>設定</h2>
-  <button id="dem">需要入力</button><button id="lines">ライン設定</button><button id="products">製品設定</button>
+  <button id="dem">需要入力</button><button id="lines">ライン設定</button><button id="products">製品設定</button><button id="materials">原料種類登録</button>
   <button id="trans">段取り設定</button><button id="sched">稼働時間設定</button><button id="config">計画条件を共有</button></div>
-  <div class="card"><div class="hint"><b>v35.14の基本計画原則</b><br>
-  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。</div></div>`;
+  <div class="card"><div class="hint"><b>v35.15の基本計画原則</b><br>
+  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。⑪製品ごとの使用原料を管理し、段取りは原料切替パターンを漏れなく設定できる。</div></div>`;
   document.getElementById("plan").onclick=planPage;
   document.getElementById("eval").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");showPlan(p)};
   document.getElementById("diag").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");const r=document.createElement("div");r.innerHTML=renderDiagnosis(p,demandRows());app.innerHTML=r.innerHTML+`<div class="card"><button class="gray" id="backDiag">戻る</button></div>`;document.getElementById("backDiag").onclick=home};
   document.getElementById("adj").onclick=()=>alert("コメント再計画は、生産計画エンジンの安定性を優先して次段階で統合します。");
-  document.getElementById("config").onclick=configPage;document.getElementById("dem").onclick=demandPage;document.getElementById("lines").onclick=linesPage;document.getElementById("products").onclick=productsPage;document.getElementById("trans").onclick=transPage;document.getElementById("sched").onclick=schedulePage;
+  document.getElementById("config").onclick=configPage;document.getElementById("dem").onclick=demandPage;document.getElementById("lines").onclick=linesPage;document.getElementById("products").onclick=productsPage;document.getElementById("materials").onclick=materialsPage;document.getElementById("trans").onclick=transPage;document.getElementById("sched").onclick=schedulePage;
 }
 
 function mondayOf(d){const x=new Date(d+"T00:00:00");const day=x.getDay();x.setDate(x.getDate()+(day===0?-6:1-day));return x}
@@ -553,27 +572,101 @@ function lineEdit(i){
   document.getElementById("back").onclick=linesPage;
 }
 function productsPage(){
-  let h=`<div class="card"><h2>製品設定</h2>`;
-  products.forEach((p,i)=>h+=`<div class="item"><b>${esc(p.name)}</b><br><span class="small">能力 ${p.capacityOverride||"ライン標準"}・最低数量 ${p.minLotOverride||"ライン標準"}</span><button data-e="${i}">編集</button></div>`);
+  let h=`<div class="card"><h2>製品設定</h2><div class="hint">製品ごとに使用する原料を設定します。複数の原料を使う製品にも対応します。</div>`;
+  products.forEach((p,i)=>{
+    const names=(p.materialIds||[]).map(id=>materials.find(m=>m.id===id||m.name===id)?.name||id).filter(Boolean);
+    h+=`<div class="item"><b>${esc(p.name)}</b><br><span class="small">原料：${names.length?esc(names.join("・")):"未設定"}　／　能力 ${p.capacityOverride||"ライン標準"}・最低数量 ${p.minLotOverride||"ライン標準"}</span><button data-e="${i}">編集</button></div>`;
+  });
   h+=`<button class="green" id="add">＋製品追加</button><button class="gray" id="back">戻る</button></div>`;
-  app.innerHTML=h;document.getElementById("add").onclick=()=>productEdit(-1);document.getElementById("back").onclick=home;document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>productEdit(n(b.dataset.e)));
+  app.innerHTML=h;
+  document.getElementById("add").onclick=()=>productEdit(-1);
+  document.getElementById("back").onclick=home;
+  document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>productEdit(n(b.dataset.e)));
 }
 function productEdit(i){
-  const p=i>=0?products[i]:{name:"",capacityOverride:0,minLotOverride:0};
-  app.innerHTML=`<div class="card"><h2>製品設定</h2><label>製品名<input id="name" value="${esc(p.name)}"></label><label>能力（個/時・0=ライン標準）<input id="cap" type="number" value="${p.capacityOverride}"></label><label>最低生産数量（0=ライン標準）<input id="lot" type="number" value="${p.minLotOverride}"></label><button class="green" id="save">保存</button><button class="gray" id="back">戻る</button></div>`;
-  document.getElementById("save").onclick=()=>{const o={...p,name:document.getElementById("name").value.trim(),capacityOverride:n(document.getElementById("cap").value),minLotOverride:n(document.getElementById("lot").value)};if(!o.name)return alert("製品名を入力");if(i<0)products.push(o);else products[i]=o;save(K.products,products);productsPage()};
+  const p=i>=0?products[i]:{name:"",capacityOverride:0,minLotOverride:0,materialIds:[]};
+  const checks=materials.map(m=>`<label class="materialcheck"><input type="checkbox" value="${esc(m.id)}" ${p.materialIds.includes(m.id)?"checked":""}><span>${esc(m.name)}</span></label>`).join("");
+  app.innerHTML=`<div class="card"><h2>製品設定</h2>
+  <label>製品名<input id="name" value="${esc(p.name)}"></label>
+  <label>能力（個/時・0=ライン標準）<input id="cap" type="number" value="${p.capacityOverride}"></label>
+  <label>最低生産数量（0=ライン標準）<input id="lot" type="number" value="${p.minLotOverride}"></label>
+  <div class="item"><b>使用する原料</b>${materials.length?`<div class="materialgrid">${checks}</div>`:`<div class="hint">先に「原料種類登録」で原料を登録してください。</div>`}</div>
+  <button class="green" id="save">保存</button><button class="gray" id="back">戻る</button></div>`;
+  document.getElementById("save").onclick=()=>{
+    const selected=[...document.querySelectorAll('.materialcheck input:checked')].map(x=>x.value);
+    const o={...p,name:document.getElementById("name").value.trim(),capacityOverride:n(document.getElementById("cap").value),minLotOverride:n(document.getElementById("lot").value),materialIds:selected};
+    if(!o.name)return alert("製品名を入力してください。");
+    if(i<0)products.push(o);else products[i]=o;
+    save(K.products,products);productsPage();
+  };
   document.getElementById("back").onclick=productsPage;
 }
-function transPage(){
-  let h=`<div class="card"><h2>段取り設定</h2><div class="hint">切替不可能も設定できます。未設定の組合せは切替可能・0分として扱います。</div>`;
-  transitions.forEach((x,i)=>h+=`<div class="item"><b>${esc(x.line||"全ライン")}</b><br>${esc(x.from)} → ${esc(x.to)}：${x.allowed===false?"切替不可能":fmt(x.time)+"分"}<button data-e="${i}">編集</button></div>`);
-  h+=`<button class="green" id="add">＋段取り追加</button><button class="gray" id="back">戻る</button></div>`;
-  app.innerHTML=h;document.getElementById("add").onclick=()=>transEdit(-1);document.getElementById("back").onclick=home;document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>transEdit(n(b.dataset.e)));
+function materialsPage(){
+  let h=`<div class="card"><h2>原料種類登録</h2><div class="hint">生産計画で使用する原料をここで一度だけ登録します。製品設定では、この一覧から使用原料を選択します。</div>`;
+  materials.forEach((m,i)=>h+=`<div class="item"><b>${esc(m.name)}</b><button data-m="${i}">編集</button></div>`);
+  h+=`<button class="green" id="add">＋原料追加</button><button class="gray" id="back">戻る</button></div>`;
+  app.innerHTML=h;
+  document.getElementById("add").onclick=()=>materialEdit(-1);
+  document.getElementById("back").onclick=home;
+  document.querySelectorAll("[data-m]").forEach(b=>b.onclick=()=>materialEdit(n(b.dataset.m)));
 }
-function transEdit(i){
-  const x=i>=0?transitions[i]:{line:"",from:"",to:"",time:0,allowed:true};
-  app.innerHTML=`<div class="card"><h2>段取り設定</h2><label>ライン（空欄=全ライン）<input id="line" value="${esc(x.line||"")}"></label><label>変更前<input id="from" value="${esc(x.from||"")}"></label><label>変更後<input id="to" value="${esc(x.to||"")}"></label><label>段取り時間（分）<input id="time" type="number" value="${x.time||0}"></label><label><input id="allowed" type="checkbox" ${x.allowed!==false?"checked":""}> 切替可能</label><button class="green" id="save">保存</button><button class="gray" id="back">戻る</button></div>`;
-  document.getElementById("save").onclick=()=>{const o={...x,line:document.getElementById("line").value.trim(),from:document.getElementById("from").value.trim(),to:document.getElementById("to").value.trim(),time:n(document.getElementById("time").value),allowed:document.getElementById("allowed").checked};if(i<0)transitions.push(o);else transitions[i]=o;save(K.trans,transitions);transPage()};
+function materialEdit(i){
+  const m=i>=0?materials[i]:{id:"mat_"+Date.now(),name:""};
+  app.innerHTML=`<div class="card"><h2>原料種類登録</h2><label>原料名<input id="name" value="${esc(m.name)}"></label>
+  <button class="green" id="save">保存</button><button class="gray" id="back">戻る</button></div>`;
+  document.getElementById("save").onclick=()=>{
+    const name=document.getElementById("name").value.trim(); if(!name)return alert("原料名を入力してください。");
+    const o={...m,name}; if(i<0)materials.push(o);else materials[i]=o;
+    save(K.materials,materials);products.forEach(p=>p.materialIds=(p.materialIds||[]).filter(id=>materials.some(x=>x.id===id)));save(K.products,products);
+    materialsPage();
+  };
+  document.getElementById("back").onclick=materialsPage;
+}
+function transKey(line,a,b){return `${line||"__ALL__"}||${a}||${b}`;}
+function transPage(){
+  let h=`<div class="card"><h2>段取り設定</h2>
+  <div class="hint">登録済みの原料について、想定されるすべての切り替え方向（原料A→原料B）を自動表示します。各パターンに段取り時間を入力し、必要なら切替不可能に設定します。未設定の組合せを手入力で探す必要はありません。</div>`;
+  if(materials.length<2) h+=`<div class="warn">原料が2種類以上登録されると、切り替えパターンが自動生成されます。</div>`;
+  const lineNames=["全ライン",...lines.map(l=>l.name)];
+  lineNames.forEach(line=>{
+    h+=`<section class="item"><h3>${esc(line)}</h3>`;
+    if(materials.length>=2){
+      h+=`<div class="scroll"><table><tr><th>変更前＼変更後</th>${materials.map(m=>`<th>${esc(m.name)}</th>`).join("")}</tr>`;
+      materials.forEach(a=>{
+        h+=`<tr><th>${esc(a.name)}</th>`;
+        materials.forEach(b=>{
+          if(a.id===b.id){h+=`<td class="small">—</td>`;return;}
+          const r=transitions.find(x=>(x.line||"全ライン")===line&&x.materialFrom===a.name&&x.materialTo===b.name);
+          h+=`<td><button class="matrixbtn" data-tline="${esc(line==="全ライン"?"":line)}" data-from="${esc(a.name)}" data-to="${esc(b.name)}">${r?(r.allowed===false?"不可":fmt(r.time)+"分"):"未設定"}</button></td>`;
+        });
+        h+=`</tr>`;
+      });
+      h+=`</table></div>`;
+    }
+    h+=`</section>`;
+  });
+  h+=`<button class="gray" id="back">戻る</button></div>`;
+  app.innerHTML=h;
+  document.getElementById("back").onclick=home;
+  document.querySelectorAll("[data-tline]").forEach(b=>b.onclick=()=>{
+    transEditByMaterial(b.dataset.tline,b.dataset.from,b.dataset.to);
+  });
+}
+function transEditByMaterial(line,from,to){
+  const idx=transitions.findIndex(x=>(x.line||"")===line&&x.materialFrom===from&&x.materialTo===to);
+  const x=idx>=0?transitions[idx]:{line,materialFrom:from,materialTo:to,time:0,allowed:true};
+  app.innerHTML=`<div class="card"><h2>段取り設定</h2>
+  <div class="item"><b>変更前</b><br>${esc(from)}</div>
+  <div class="item"><b>変更後</b><br>${esc(to)}</div>
+  <label>ライン（空欄=全ライン）<input id="line" value="${esc(line)}"></label>
+  <label>段取り時間（分）<input id="time" type="number" min="0" step="1" value="${n(x.time)}"></label>
+  <label><input id="allowed" type="checkbox" ${x.allowed!==false?"checked":""}> 切替可能</label>
+  <button class="green" id="save">保存</button><button class="gray" id="back">戻る</button></div>`;
+  document.getElementById("save").onclick=()=>{
+    const o={...x,line:document.getElementById("line").value.trim(),materialFrom:from,materialTo:to,time:n(document.getElementById("time").value),allowed:document.getElementById("allowed").checked};
+    if(idx<0)transitions.push(o);else transitions[idx]=o;
+    save(K.trans,transitions);transPage();
+  };
   document.getElementById("back").onclick=transPage;
 }
 function schedulePage(){
