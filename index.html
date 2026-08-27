@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.12（需要充足・最終数量修正版）</title>
+<title>AI生産計画 v35.13（需要充足・最終数量修正版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:22px;font-weight:800;line-height:1.35}
@@ -22,7 +22,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 </head>
 <body>
 <header>
-  <div class="title">AI生産計画 v35.12</div>
+  <div class="title">AI生産計画 v35.13</div>
   <div>v30基準・稼働時間／段取り／最低生産数量を守り、需要を満たせる計画を優先</div>
 </header>
 <main id="app"></main>
@@ -84,7 +84,7 @@ function buildSlots(){
 }
 
 /*
-  v35.12 根本修正
+  v35.13 根本修正
   ----------------
   旧ロジックは「残需要 < 最低生産数量」の時点で候補を捨てていた。
   しかし最低生産数量はロット倍数ではなく、最終回の残需要まで切り上げる制約でもない。
@@ -349,48 +349,27 @@ function planPage(){
 
 
 function buildPlanExport(){
-  const startDate=(document.getElementById("planStart")||{}).value||"";
-  const endDate=(document.getElementById("planEnd")||{}).value||"";
-  const planId=(document.getElementById("planId")||{}).value||"";
-  const demandText=(document.getElementById("planDemand")||{}).value||"";
-  let demand=[];
-  if(demandText.trim()){
-    demand=demandText.split(/\n/).map(x=>x.trim()).filter(Boolean).map(line=>{
-      const p=line.split(/[,，\t ]+/).filter(Boolean);
-      return {product:p[0]||"",quantity:Number(p[1]||0)};
-    }).filter(x=>x.product&&Number.isFinite(x.quantity));
+  const meta=load(K.planMeta,{mode:"weekly",start:"",end:""}),wd=load(K.weeklyDem,{});
+  const weeklyDemand=[];
+  if(meta.mode==="monthly"&&meta.start&&meta.end){
+    weekRanges(meta.start,meta.end).forEach((w,i)=>weeklyDemand.push({weekNo:i+1,startDate:w.start,endDate:w.end,demand:products.map(p=>({product:p.name,quantity:n(wd[`${w.start}_${p.name}`])}))}));
+  }else{
+    weeklyDemand.push({weekNo:1,startDate:meta.start||"",endDate:meta.end||"",demand:products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)}))});
   }
-  return {
-    schema:"ai-seisan-plan-data",
-    schemaVersion:2,
-    exportedAt:new Date().toISOString(),
-    appVersion:"v35.12",
-    plan:{
-      id:planId,
-      startDate,
-      endDate,
-      periodType:(startDate&&endDate)?"custom":"unspecified",
-      demand,
-      weeklyDemand:[],
-      dailyDemand:[],
-      temporaryConstraints:[],
-      recurringConstraints:[]
-    },
-    settings:{
-      lines:load(K.lines,[]),
-      products:load(K.products,[]),
-      transitions:load(K.trans,[]),
-      schedules:load(K.schedules,[])
-    }
-  };
+  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.13",
+    plan:{id:meta.mode==="monthly"?`MONTH-${meta.start}-${meta.end}`:`WEEK-${new Date().toISOString().slice(0,10)}`,startDate:meta.start,endDate:meta.end,periodType:meta.mode,
+      demand:meta.mode==="weekly"?products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)})):[],
+      weeklyDemand,dailyDemand:[],temporaryConstraints:[],recurringConstraints:[]},
+    settings:{lines:load(K.lines,[]),products:load(K.products,[]),transitions:load(K.trans,[]),schedules:load(K.schedules,[])}};
 }
+
 function downloadPlanData(){
   const data=JSON.stringify(buildPlanExport(),null,2);
   const blob=new Blob([data],{type:"application/json"});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
   a.href=url;
-  a.download="ai_seisan_plan_data_v35.12.json";
+  a.download="ai_seisan_plan_data_v35.13.json";
   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
 }
 function importPlanDataText(text){
@@ -407,12 +386,12 @@ function importPlanDataText(text){
 }
 function configPage(){
   app.innerHTML=`<div class="card"><h2>計画データを共有</h2>
-  <div class="exportbox"><b>計画期間＋需要＋計画条件を1つにまとめます</b><br>
-  1週間だけでなく、1か月など任意の期間を指定できます。期間情報と計画IDを付けて、ChatGPTで「今回の計画」として扱える形式にします。
+  <div class="exportbox"><b>計画期間＋週別需要＋計画条件を1つにまとめます</b><br>
+  週次または月次で入力できます。月次では指定期間を月曜〜日曜の週に分け、各週の需要を保持してChatGPTへ渡します。
   </div>
   <label class="item"><b>計画ID</b><input id="planId" placeholder="例：2026-W36"></label>
   <label class="item"><b>計画期間</b><div style="display:flex;gap:8px"><input id="planStart" type="date"><span>〜</span><input id="planEnd" type="date"></div></label>
-  <label class="item"><b>需要（製品名 数量）</b><textarea id="planDemand" rows="6" placeholder="例：&#10;a 60000&#10;b 30000"></textarea></label>
+  <label class="item"><b>週別需要（製品ごとに数量入力）</b><textarea id="planDemand" rows="6" placeholder="例：&#10;a 60000&#10;b 30000"></textarea></label>
   <button class="green" id="export">計画データをファイルに出力</button>
   <label class="item"><b>計画データファイルを読み込む</b><input id="file" type="file" accept=".json,application/json"></label>
   <div class="hint">読み込むと計画条件を更新します。計画期間・需要・今回だけの制約・継続条件を別管理できる形式です。新しい計画期間を読み込んだとき、前の期間固有の制約を自動的に引き継がない設計です。</div>
@@ -435,8 +414,8 @@ function home(){
   <div class="card"><h2>設定</h2>
   <button id="dem">需要入力</button><button id="lines">ライン設定</button><button id="products">製品設定</button>
   <button id="trans">段取り設定</button><button id="sched">稼働時間設定</button><button id="config">計画条件を共有</button></div>
-  <div class="card"><div class="hint"><b>v35.12の基本計画原則</b><br>
-  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。</div></div>`;
+  <div class="card"><div class="hint"><b>v35.13の基本計画原則</b><br>
+  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。</div></div>`;
   document.getElementById("plan").onclick=planPage;
   document.getElementById("eval").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");showPlan(p)};
   document.getElementById("diag").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");const r=document.createElement("div");r.innerHTML=renderDiagnosis(p,demandRows());app.innerHTML=r.innerHTML+`<div class="card"><button class="gray" id="backDiag">戻る</button></div>`;document.getElementById("backDiag").onclick=home};
@@ -444,17 +423,48 @@ function home(){
   document.getElementById("config").onclick=configPage;document.getElementById("dem").onclick=demandPage;document.getElementById("lines").onclick=linesPage;document.getElementById("products").onclick=productsPage;document.getElementById("trans").onclick=transPage;document.getElementById("sched").onclick=schedulePage;
 }
 
+function mondayOf(d){const x=new Date(d+"T00:00:00");const day=x.getDay();x.setDate(x.getDate()+(day===0?-6:1-day));return x}
+function sundayOfMonday(m){const x=new Date(m);x.setDate(x.getDate()+6);return x}
+function isoDate(d){return d.toISOString().slice(0,10)}
+function formatJP(d){return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`}
+function weekRanges(start,end){const s=mondayOf(start),out=[];const last=new Date(end+"T23:59:59");while(s<=last){const e=sundayOfMonday(s);out.push({start:isoDate(s),end:isoDate(e)});s.setDate(s.getDate()+7)}return out}
 function demandPage(){
-  let h=`<div class="card"><h2>需要入力</h2><div class="hint">製品と数量を入力してください。保存済みの需要はそのまま引き継ぎます。</div>`;
-  demands.forEach((d,i)=>h+=`<div class="item"><label>製品<select data-p="${i}">${products.map(p=>`<option ${p.name===d.product?"selected":""}>${esc(p.name)}</option>`).join("")}</select></label><label>需要数量<input type="number" min="0" data-q="${i}" value="${n(d.quantity??d.qty??0)}"></label><button class="red" data-r="${i}">削除</button></div>`);
-  h+=`<button class="green" id="add">＋需要を追加</button><button class="green" id="save">保存</button><button class="gray" id="back">戻る</button></div>`;
-  app.innerHTML=h;
-  document.getElementById("add").onclick=()=>{demands.push({product:products[0]?.name||"",quantity:0});demandPage()};
-  document.getElementById("save").onclick=()=>{demands.forEach((d,i)=>{d.product=document.querySelector(`[data-p="${i}"]`)?.value||d.product;d.quantity=n(document.querySelector(`[data-q="${i}"]`)?.value)});save(K.dem,demands);alert("保存しました")};
-  document.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{demands.splice(n(b.dataset.r),1);save(K.dem,demands);demandPage()});
-  document.getElementById("back").onclick=home;
+  const meta=load(K.planMeta,{mode:"weekly",start:"",end:""}), wd=load(K.weeklyDem,{});
+  app.innerHTML=`<div class="card"><h2>需要入力</h2>
+  <div class="item"><b>計画方式</b><br>
+  <label><input type="radio" name="mode" value="weekly" ${meta.mode!=="monthly"?"checked":""}> 週次</label>
+  <label><input type="radio" name="mode" value="monthly" ${meta.mode==="monthly"?"checked":""}> 月次</label></div>
+  <div id="periodBox"></div><div id="demandBox"></div>
+  <button class="green" id="saveDemand">保存</button><button class="gray" id="back">戻る</button></div>`;
+  const render=()=>{
+    const mode=document.querySelector('input[name="mode"]:checked').value;
+    const m=load(K.planMeta,{mode,start:"",end:""});
+    let h="";
+    if(mode==="monthly")h=`<div class="hint">期間を指定すると、月曜〜日曜を1週として自動分割します。開始日・終了日が週途中でも、指定期間内を計画対象として扱います。</div><div class="row"><label>開始日<input id="startDate" type="date" value="${esc(m.start||"")}"></label><label>終了日<input id="endDate" type="date" value="${esc(m.end||"")}"></label></div>`;
+    else h=`<div class="hint">1週間分の需要だけ入力します。製品は製品設定から自動表示されます。</div>`;
+    document.getElementById("periodBox").innerHTML=h;
+    const start=mode==="monthly"?document.getElementById("startDate")?.value:"", end=mode==="monthly"?document.getElementById("endDate")?.value:"";
+    const weeks=mode==="monthly"&&start&&end&&start<=end?weekRanges(start,end):[{start:"",end:""}];
+    let body="";
+    weeks.forEach((w,i)=>{
+      body+=`<div class="item"><b>${mode==="monthly"?`${i+1}週目：${formatJP(new Date(w.start+"T00:00:00"))}〜${formatJP(new Date(w.end+"T00:00:00"))}`:"対象週"}</b>`;
+      products.forEach(p=>{const key=mode==="monthly"?`${w.start}_${p.name}`:p.name;const val=n(wd[key]??(mode==="weekly"?(demands.find(d=>d.product===p.name)?.quantity||0):0));body+=`<label>${esc(p.name)}<input type="number" min="0" step="1" data-d="${esc(key)}" value="${val}"></label>`});
+      body+=`</div>`;
+    });
+    document.getElementById("demandBox").innerHTML=products.length?body:`<div class="warn">先に製品設定で製品を登録してください。</div>`;
+  };
+  document.querySelectorAll('input[name="mode"]').forEach(r=>r.onchange=render);
+  document.getElementById("periodBox").onchange=render;
+  document.getElementById("saveDemand").onclick=()=>{
+    const mode=document.querySelector('input[name="mode"]:checked').value,start=mode==="monthly"?document.getElementById("startDate")?.value:"",end=mode==="monthly"?document.getElementById("endDate")?.value:"";
+    if(mode==="monthly"&&(!start||!end||start>end))return alert("月次の開始日・終了日を正しく指定してください。");
+    const vals={};document.querySelectorAll("[data-d]").forEach(el=>vals[el.dataset.d]=n(el.value));
+    save(K.weeklyDem,vals);save(K.planMeta,{mode,start,end});
+    if(mode==="weekly"){demands=products.map(p=>({product:p.name,quantity:vals[p.name]||0})).filter(x=>x.quantity>0);save(K.dem,demands)}else{demands=[];save(K.dem,[])}
+    alert("需要を保存しました。");
+  };
+  document.getElementById("back").onclick=home;render();
 }
-
 function linesPage(){
   let h=`<div class="card"><h2>ライン設定</h2>`;
   lines.forEach((x,i)=>h+=`<div class="item"><b>${esc(x.name)}</b><br><span class="small">能力 ${fmt(x.capacity)}個/h・最低生産数量 ${fmt(x.lot)}個・必要人員 ${fmt(x.workers)}人</span><button data-e="${i}">編集</button></div>`);
