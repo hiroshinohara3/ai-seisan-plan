@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.18（需要充足・最終数量修正版）</title>
+<title>AI生産計画 v35.19（需要充足・最終数量修正版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:22px;font-weight:800;line-height:1.35}
@@ -42,10 +42,12 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 </style><style id="v3517-optimizer-style">
 .bestorder{font-size:22px;margin:10px 0;word-break:break-word}
 .bestorder span{opacity:.65;margin:0 4px}
+</style><style id="v3519-chat-export-style">
+#chatExport{font-weight:700}
 </style></head>
 <body>
 <header>
-  <div class="title">AI生産計画 v35.18</div>
+  <div class="title">AI生産計画 v35.19</div>
   <div>v30基準・稼働時間／段取り／最低生産数量を守り、需要を満たせる計画を優先</div>
 </header>
 <main id="app"></main>
@@ -122,7 +124,7 @@ function buildSlots(){
 }
 
 /*
-  v35.18 根本修正
+  v35.19 根本修正
   ----------------
   旧ロジックは「残需要 < 最低生産数量」の時点で候補を捨てていた。
   しかし最低生産数量はロット倍数ではなく、最終回の残需要まで切り上げる制約でもない。
@@ -394,7 +396,7 @@ function buildPlanExport(){
   }else{
     weeklyDemand.push({weekNo:1,startDate:meta.start||"",endDate:meta.end||"",demand:products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)}))});
   }
-  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.18",
+  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.19",
     plan:{id:meta.mode==="monthly"?`MONTH-${meta.start}-${meta.end}`:`WEEK-${new Date().toISOString().slice(0,10)}`,startDate:meta.start,endDate:meta.end,periodType:meta.mode,
       demand:meta.mode==="weekly"?products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)})):[],
       weeklyDemand,dailyDemand:[],temporaryConstraints:[],recurringConstraints:[]},
@@ -407,7 +409,7 @@ function downloadPlanData(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
   a.href=url;
-  a.download="ai_seisan_plan_data_v35.18.json";
+  a.download="ai_seisan_plan_data_v35.19.json";
   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
 }
 function importPlanDataText(text){
@@ -450,15 +452,15 @@ function home(){
   <button class="orange" id="diag">計画の実行可能性を診断</button>
   <button class="orange" id="adj">最終調整（自然なコメントで再計画）</button></div>
   <div class="card"><h2>設定</h2>
-  <button id="dem">需要入力</button><button id="preflight">計画実行可能性チェック</button><button id="optimizer">生産順序を自動比較</button><button id="allocation">曜日別生産計画を作成</button><button id="lines">ライン設定</button><button id="products">製品設定</button><button id="materials">原料種類登録</button>
+  <button id="dem">需要入力</button><button id="preflight">計画実行可能性チェック</button><button id="optimizer">生産順序を自動比較</button><button id="allocation">曜日別生産計画を作成</button><button id="chatExport">ChatGPTへ計画データを出力</button><button id="lines">ライン設定</button><button id="products">製品設定</button><button id="materials">原料種類登録</button>
   <button id="trans">段取り設定</button><button id="sched">稼働時間設定</button><button id="config">計画条件を共有</button></div>
-  <div class="card"><div class="hint"><b>v35.18の基本計画原則</b><br>
-  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。⑪製品ごとの使用原料を管理し、段取りは原料切替パターンを漏れなく設定できる。⑫生産順序は候補を比較し、段取り・制約・稼働時間を含めて選定する。⑬採用した順序を曜日・稼働時間へ自動割付し、製品を可能な限り完了させてから次製品へ移る。</div></div>`;
+  <div class="card"><div class="hint"><b>v35.19の基本計画原則</b><br>
+  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。⑪製品ごとの使用原料を管理し、段取りは原料切替パターンを漏れなく設定できる。⑫生産順序は候補を比較し、段取り・制約・稼働時間を含めて選定する。⑬採用した順序を曜日・稼働時間へ自動割付し、製品を可能な限り完了させてから次製品へ移る。⑭アプリは計画条件を管理・出力し、現場都合による対話的な計画調整はチャット側で行う。</div></div>`;
   document.getElementById("plan").onclick=planPage;
   document.getElementById("eval").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");showPlan(p)};
   document.getElementById("diag").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");const r=document.createElement("div");r.innerHTML=renderDiagnosis(p,demandRows());app.innerHTML=r.innerHTML+`<div class="card"><button class="gray" id="backDiag">戻る</button></div>`;document.getElementById("backDiag").onclick=home};
   document.getElementById("adj").onclick=()=>alert("コメント再計画は、生産計画エンジンの安定性を優先して次段階で統合します。");
-  document.getElementById("config").onclick=configPage;document.getElementById("dem").onclick=demandPage;document.getElementById("preflight").onclick=preflightPage;document.getElementById("optimizer").onclick=optimizerPage;document.getElementById("allocation").onclick=allocationPage;document.getElementById("lines").onclick=linesPage;document.getElementById("products").onclick=productsPage;document.getElementById("materials").onclick=materialsPage;document.getElementById("trans").onclick=transPage;document.getElementById("sched").onclick=schedulePage;
+  document.getElementById("config").onclick=configPage;document.getElementById("dem").onclick=demandPage;document.getElementById("preflight").onclick=preflightPage;document.getElementById("optimizer").onclick=optimizerPage;document.getElementById("allocation").onclick=allocationPage;document.getElementById("chatExport").onclick=chatUploadPage;document.getElementById("lines").onclick=linesPage;document.getElementById("products").onclick=productsPage;document.getElementById("materials").onclick=materialsPage;document.getElementById("trans").onclick=transPage;document.getElementById("sched").onclick=schedulePage;
 }
 
 function mondayOf(d){const x=new Date(d+"T00:00:00");const day=x.getDay();x.setDate(x.getDate()+(day===0?-6:1-day));return x}
@@ -604,6 +606,57 @@ function allocateOrderToDays(order){
   const unmet=Object.entries(remain).filter(([,q])=>q>0).map(([product,quantity])=>({product,quantity}));
   return {rows,unmet,remainingMinutes:rows.reduce((s,r)=>s+r.remainingMinutes,0)};
 }
+
+function buildChatGPTPackage(){
+  const meta=currentDemandMeta();
+  const demand=demandForCurrentWeek();
+  const feasibility=preflightPlan();
+  const optimization=optimizeOrders();
+  const order=optimization.best?.order||demand.map(x=>x.product);
+  const allocation=allocateOrderToDays(order);
+  return {
+    schemaVersion:"1.0",
+    appVersion:"v35.19",
+    purpose:"生産計画立案用アップロードデータ",
+    period:meta,
+    masters:{
+      lines:load(K.lines,[]),
+      products:load(K.products,[]),
+      materials:load(K.materials,[]),
+      transitions:load(K.trans,[]),
+      schedules:load(K.schedules,[])
+    },
+    demand,
+    preflight:feasibility,
+    orderOptimization:optimization,
+    allocationPreview:allocation,
+    note:"このデータをチャット側へ渡し、登録条件を前提として生産計画を立案する。現場都合はチャット上の指示として反映する。"
+  };
+}
+function chatUploadPage(){
+  const p=buildChatGPTPackage();
+  app.innerHTML=`<div class="card"><h2>ChatGPTへ計画データを出力</h2>
+  <div class="hint">アプリは計画条件を管理し、このデータをチャットへ渡します。現場都合による調整はチャット側で行います。</div>
+  <div class="item"><b>対象期間</b><br>${esc(p.period.start||"未設定")} ～ ${esc(p.period.end||"未設定")}</div>
+  <div class="item"><b>需要</b><ul>${p.demand.map(x=>`<li>${esc(x.product)}：${x.quantity.toLocaleString()}個</li>`).join("")||"<li>未入力</li>"}</ul></div>
+  <div class="item"><b>含まれる情報</b><br>ライン・稼働時間・製品・使用原料・原料マスター・段取り設定・需要・実行可能性チェック・生産順序比較・曜日別計画</div>
+  <button class="green" id="download">アップロード用データを保存</button>
+  <button class="green" id="copy">データをコピー</button>
+  <button class="gray" id="back">戻る</button></div>`;
+  const json=JSON.stringify(p,null,2);
+  document.getElementById("download").onclick=()=>{
+    const blob=new Blob([json],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=`ai_seisan_chatgpt_${p.period.start||"period"}.json`;a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  };
+  document.getElementById("copy").onclick=async()=>{
+    try{await navigator.clipboard.writeText(json);alert("計画データをコピーしました。チャットに貼り付けできます。")}
+    catch(e){alert("コピーできませんでした。『アップロード用データを保存』を使ってください。")}
+  };
+  document.getElementById("back").onclick=home;
+}
+
 function allocationPage(){
   const opt=optimizeOrders();
   const order=opt.best?.order||demandForCurrentWeek().map(x=>x.product);
