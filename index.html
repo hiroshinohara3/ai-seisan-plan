@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.16（需要充足・最終数量修正版）</title>
+<title>AI生産計画 v35.17（需要充足・最終数量修正版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:22px;font-weight:800;line-height:1.35}
@@ -39,10 +39,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 .ok{padding:12px;border-radius:12px;font-weight:700}
 .warn{padding:12px;border-radius:12px}
 .item ul{margin:8px 0 0 20px;padding:0}
+</style><style id="v3517-optimizer-style">
+.bestorder{font-size:22px;margin:10px 0;word-break:break-word}
+.bestorder span{opacity:.65;margin:0 4px}
 </style></head>
 <body>
 <header>
-  <div class="title">AI生産計画 v35.16</div>
+  <div class="title">AI生産計画 v35.17</div>
   <div>v30基準・稼働時間／段取り／最低生産数量を守り、需要を満たせる計画を優先</div>
 </header>
 <main id="app"></main>
@@ -119,7 +122,7 @@ function buildSlots(){
 }
 
 /*
-  v35.16 根本修正
+  v35.17 根本修正
   ----------------
   旧ロジックは「残需要 < 最低生産数量」の時点で候補を捨てていた。
   しかし最低生産数量はロット倍数ではなく、最終回の残需要まで切り上げる制約でもない。
@@ -391,11 +394,11 @@ function buildPlanExport(){
   }else{
     weeklyDemand.push({weekNo:1,startDate:meta.start||"",endDate:meta.end||"",demand:products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)}))});
   }
-  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.16",
+  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.17",
     plan:{id:meta.mode==="monthly"?`MONTH-${meta.start}-${meta.end}`:`WEEK-${new Date().toISOString().slice(0,10)}`,startDate:meta.start,endDate:meta.end,periodType:meta.mode,
       demand:meta.mode==="weekly"?products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)})):[],
       weeklyDemand,dailyDemand:[],temporaryConstraints:[],recurringConstraints:[]},
-    settings:{lines:load(K.lines,[]),products:load(K.products,[]),transitions:load(K.trans,[]),schedules:load(K.schedules,[]),materials:load(K.materials,[])},preflight:preflightPlan()};
+    settings:{lines:load(K.lines,[]),products:load(K.products,[]),transitions:load(K.trans,[]),schedules:load(K.schedules,[]),materials:load(K.materials,[])},preflight:preflightPlan(),orderOptimization:optimizeOrders()};
 }
 
 function downloadPlanData(){
@@ -404,7 +407,7 @@ function downloadPlanData(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
   a.href=url;
-  a.download="ai_seisan_plan_data_v35.16.json";
+  a.download="ai_seisan_plan_data_v35.17.json";
   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
 }
 function importPlanDataText(text){
@@ -447,15 +450,15 @@ function home(){
   <button class="orange" id="diag">計画の実行可能性を診断</button>
   <button class="orange" id="adj">最終調整（自然なコメントで再計画）</button></div>
   <div class="card"><h2>設定</h2>
-  <button id="dem">需要入力</button><button id="preflight">計画実行可能性チェック</button><button id="lines">ライン設定</button><button id="products">製品設定</button><button id="materials">原料種類登録</button>
+  <button id="dem">需要入力</button><button id="preflight">計画実行可能性チェック</button><button id="optimizer">生産順序を自動比較</button><button id="lines">ライン設定</button><button id="products">製品設定</button><button id="materials">原料種類登録</button>
   <button id="trans">段取り設定</button><button id="sched">稼働時間設定</button><button id="config">計画条件を共有</button></div>
-  <div class="card"><div class="hint"><b>v35.16の基本計画原則</b><br>
-  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。⑪製品ごとの使用原料を管理し、段取りは原料切替パターンを漏れなく設定できる。</div></div>`;
+  <div class="card"><div class="hint"><b>v35.17の基本計画原則</b><br>
+  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。⑪製品ごとの使用原料を管理し、段取りは原料切替パターンを漏れなく設定できる。⑫生産順序は候補を比較し、段取り・制約・稼働時間を含めて選定する。</div></div>`;
   document.getElementById("plan").onclick=planPage;
   document.getElementById("eval").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");showPlan(p)};
   document.getElementById("diag").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");const r=document.createElement("div");r.innerHTML=renderDiagnosis(p,demandRows());app.innerHTML=r.innerHTML+`<div class="card"><button class="gray" id="backDiag">戻る</button></div>`;document.getElementById("backDiag").onclick=home};
   document.getElementById("adj").onclick=()=>alert("コメント再計画は、生産計画エンジンの安定性を優先して次段階で統合します。");
-  document.getElementById("config").onclick=configPage;document.getElementById("dem").onclick=demandPage;document.getElementById("preflight").onclick=preflightPage;document.getElementById("lines").onclick=linesPage;document.getElementById("products").onclick=productsPage;document.getElementById("materials").onclick=materialsPage;document.getElementById("trans").onclick=transPage;document.getElementById("sched").onclick=schedulePage;
+  document.getElementById("config").onclick=configPage;document.getElementById("dem").onclick=demandPage;document.getElementById("preflight").onclick=preflightPage;document.getElementById("optimizer").onclick=optimizerPage;document.getElementById("lines").onclick=linesPage;document.getElementById("products").onclick=productsPage;document.getElementById("materials").onclick=materialsPage;document.getElementById("trans").onclick=transPage;document.getElementById("sched").onclick=schedulePage;
 }
 
 function mondayOf(d){const x=new Date(d+"T00:00:00");const day=x.getDay();x.setDate(x.getDate()+(day===0?-6:1-day));return x}
@@ -525,6 +528,87 @@ function materialSetForProduct(name){
   const p=prod(name);
   return (p.materialIds||[]).map(id=>materials.find(m=>m.id===id||m.name===id)?.name||id).filter(Boolean);
 }
+
+function permutations(arr){
+  if(arr.length<=1)return [arr.slice()];
+  const out=[];
+  arr.forEach((v,i)=>{
+    const rest=arr.slice(0,i).concat(arr.slice(i+1));
+    permutations(rest).forEach(p=>out.push([v,...p]));
+  });
+  return out;
+}
+function calcOrder(order,line){
+  let production=0,setup=0,feasible=true,blocked=[];
+  order.forEach(name=>{
+    const d=demandForCurrentWeek().find(x=>x.product===name);
+    const p=prod(name);
+    if(d)production+=d.quantity/productCapacity(p,line)*60;
+  });
+  for(let i=1;i<order.length;i++){
+    const from=order[i-1],to=order[i];
+    const am=materialSetForProduct(from),bm=materialSetForProduct(to);
+    let maxSetup=0;
+    am.forEach(a=>bm.forEach(b=>{
+      const r=transitionForMaterial(a,b,line.name);
+      if(!r.allowed){feasible=false;blocked.push(`${from}（${a}）→${to}（${b}）`);}
+      else maxSetup=Math.max(maxSetup,r.time);
+    }));
+    setup+=maxSetup;
+  }
+  return {order,productionMinutes:production,setupMinutes:setup,totalMinutes:production+setup,feasible,blocked};
+}
+function optimizeOrders(){
+  const demand=demandForCurrentWeek().filter(x=>x.quantity>0);
+  const line=load(K.lines,[])[0]||{name:"1号",capacity:2050,lot:5000};
+  if(!demand.length)return {status:"no_demand",candidates:[],best:null};
+  // Avoid factorial explosion while the app is small; all permutations up to 8 products.
+  const names=demand.map(x=>x.product);
+  const orders=names.length<=8?permutations(names):[];
+  const available=calcAvailableMinutes().reduce((s,x)=>s+x.minutes,0);
+  const candidates=orders.map(o=>calcOrder(o,line)).map(x=>({...x,withinTime:x.totalMinutes<=available}));
+  const feasible=candidates.filter(x=>x.feasible&&x.withinTime);
+  // Score: first maximize feasibility, then demand coverage (all current candidates
+  // represent full demand), then minimize total time and setup.
+  feasible.sort((a,b)=>a.totalMinutes-b.totalMinutes || a.setupMinutes-b.setupMinutes);
+  const blockedOnly=candidates.filter(x=>x.feasible);
+  blockedOnly.sort((a,b)=>a.totalMinutes-b.totalMinutes);
+  return {
+    status:feasible.length?"feasible_order_found":"no_fully_feasible_order",
+    availableMinutes:available,
+    candidates:candidates.sort((a,b)=>a.totalMinutes-b.totalMinutes),
+    best:feasible[0]||blockedOnly[0]||candidates[0]||null
+  };
+}
+function optimizerPage(){
+  const r=optimizeOrders();
+  const fmt=m=>`${Math.floor(Math.max(0,m)/60)}時間${Math.round(Math.max(0,m)%60)}分`;
+  let h=`<div class="card"><h2>生産順序の自動比較</h2>
+  <div class="hint">登録された需要・能力・稼働時間・原料切替条件を使い、可能な生産順序を比較します。単に「登録順」で決めず、段取りと制約を含めて判断します。</div>`;
+  if(r.status==="no_demand"){
+    h+=`<div class="warn">需要が入力されていません。</div>`;
+  }else if(r.best){
+    h+=`<div class="item"><b>推奨順序</b><div class="bestorder">${r.best.order.map((x,i)=>`${i?` <span>→</span> `:""}<b>${esc(x)}</b>`).join("")}</div>
+    <div class="small">生産 ${fmt(r.best.productionMinutes)} ＋ 段取り ${fmt(r.best.setupMinutes)} ＝ ${fmt(r.best.totalMinutes)} / 使用可能 ${fmt(r.availableMinutes)}</div>
+    ${r.best.feasible&&r.best.withinTime?`<div class="ok">この順序なら登録条件内で実行可能です。</div>`:`<div class="warn">全需要をこの順序で満たすことはできません。制約を確認してください。</div>`}</div>`;
+    if(r.best.blocked?.length){
+      h+=`<div class="item"><b>阻害する切替</b><ul>${[...new Set(r.best.blocked)].map(x=>`<li>${esc(x)}（切替不可）</li>`).join("")}</ul></div>`;
+    }
+    const top=r.candidates.slice(0,Math.min(5,r.candidates.length));
+    h+=`<div class="item"><b>比較結果 上位${top.length}件</b><div class="scroll"><table><tr><th>順序</th><th>段取り</th><th>合計</th><th>判定</th></tr>
+      ${top.map(x=>`<tr><td>${x.order.map(esc).join(" → ")}</td><td>${fmt(x.setupMinutes)}</td><td>${fmt(x.totalMinutes)}</td><td>${x.feasible&&x.withinTime?"○ 実行可能":x.feasible?"△ 時間不足":"× 切替不可"}</td></tr>`).join("")}</table></div></div>`;
+  }
+  h+=`<button class="green" id="plan">この順序で生産案を作成</button><button class="gray" id="back">戻る</button></div>`;
+  app.innerHTML=h;
+  document.getElementById("plan").onclick=()=>{
+    if(r.best&&r.best.feasible&&r.best.withinTime){
+      sessionStorage.setItem("aiSeisan_selectedOrder",JSON.stringify(r.best.order));
+    }
+    if(typeof planPage==="function")planPage();else alert("生産案作成機能を開けません。");
+  };
+  document.getElementById("back").onclick=home;
+}
+
 function preflightPlan(){
   const lineList=load(K.lines,[]);
   const line=lineList[0]||{name:"1号",capacity:2050,lot:5000};
