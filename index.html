@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.21（需要充足・最終数量修正版）</title>
+<title>AI生産計画 v35.22（需要充足・最終数量修正版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:22px;font-weight:800;line-height:1.35}
@@ -47,7 +47,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 </style></head>
 <body>
 <header>
-  <div class="title">AI生産計画 v35.21</div>
+  <div class="title">AI生産計画 v35.22</div>
   <div>v30基準・稼働時間／段取り／最低生産数量を守り、需要を満たせる計画を優先</div>
 </header>
 <main id="app"></main>
@@ -124,7 +124,7 @@ function buildSlots(){
 }
 
 /*
-  v35.21 根本修正
+  v35.22 根本修正
   ----------------
   旧ロジックは「残需要 < 最低生産数量」の時点で候補を捨てていた。
   しかし最低生産数量はロット倍数ではなく、最終回の残需要まで切り上げる制約でもない。
@@ -396,7 +396,7 @@ function buildPlanExport(){
   }else{
     weeklyDemand.push({weekNo:1,startDate:meta.start||"",endDate:meta.end||"",demand:products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)}))});
   }
-  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.21",
+  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.22",
     plan:{id:meta.mode==="monthly"?`MONTH-${meta.start}-${meta.end}`:`WEEK-${new Date().toISOString().slice(0,10)}`,startDate:meta.start,endDate:meta.end,periodType:meta.mode,
       demand:meta.mode==="weekly"?products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)})):[],
       weeklyDemand,dailyDemand:[],temporaryConstraints:[],recurringConstraints:[]},
@@ -409,7 +409,7 @@ function downloadPlanData(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
   a.href=url;
-  a.download="ai_seisan_plan_data_v35.21.json";
+  a.download="ai_seisan_plan_data_v35.22.json";
   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
 }
 function importPlanDataText(text){
@@ -459,6 +459,64 @@ function configPage(){
   document.getElementById("back").onclick=home;
 }
 
+
+function buildChatGPTPackage(){
+  const meta=currentDemandMeta();
+  const lines=load(K.lines,[]);
+  const products=load(K.products,[]);
+  const materials=load(K.materials,[]);
+  const transitions=load(K.trans,[]);
+  const schedules=load(K.schedules,[]);
+  const weekly=load(K.weeklyDem,{});
+  const demand=demandForCurrentWeek();
+  return {
+    schemaVersion:"1.0",
+    appVersion:"v35.22",
+    purpose:"生産計画立案用データ",
+    period:meta,
+    masters:{lines,products,materials,transitions,schedules},
+    demand,
+    weeklyDemand:weekly,
+    planningPolicy:{
+      weeklyPlanning:"週の需要を満たすことを基本とする。",
+      monthlyPlanning:"月次の場合は各週（月曜〜日曜）の需要を維持して計画する。",
+      chatRole:"現場都合による対話的な計画調整はチャット側で行う。",
+      appRole:"アプリは計画条件と需要を管理し、計画立案用データとして出力する。"
+    }
+  };
+}
+function chatUploadPage(){
+  let p;
+  try{p=buildChatGPTPackage()}catch(e){alert("計画データの作成に失敗しました："+e.message);return}
+  const json=JSON.stringify(p,null,2);
+  app.innerHTML=`<div class="card"><h2>ChatGPTへ計画データを出力</h2>
+  <div class="hint">アプリに登録した計画条件と需要を、1つのJSONファイルにまとめます。このファイルをこのチャットへアップロードして計画を立案します。</div>
+  <div class="item"><b>対象期間</b><br>${esc(p.period.start||"未設定")} ～ ${esc(p.period.end||"未設定")}</div>
+  <div class="item"><b>登録情報</b><br>ライン：${p.masters.lines.length}件　製品：${p.masters.products.length}件　原料：${p.masters.materials.length}件　段取り：${p.masters.transitions.length}件　稼働時間：${p.masters.schedules.length}件</div>
+  <div class="item"><b>需要</b><pre style="white-space:pre-wrap;max-height:220px;overflow:auto">${esc(JSON.stringify(p.demand,null,2))}</pre></div>
+  <button class="green" id="downloadChat">アップロード用データを保存</button>
+  <button class="green" id="copyChat">データをコピー</button>
+  <button class="gray" id="backChat">戻る</button></div>`;
+  document.getElementById("downloadChat").onclick=()=>{
+    const blob=new Blob([json],{type:"application/json;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=`ai_seisan_plan_${p.period.start||"period"}.json`;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
+  document.getElementById("copyChat").onclick=async()=>{
+    try{
+      await navigator.clipboard.writeText(json);
+      alert("計画データをコピーしました。");
+    }catch(e){
+      alert("コピーできませんでした。「アップロード用データを保存」を使用してください。");
+    }
+  };
+  document.getElementById("backChat").onclick=home;
+}
+
 function home(){
   app.innerHTML=`<div class="card"><h2>生産計画</h2>
   <button id="plan">需要から生産案を作成</button>
@@ -468,8 +526,8 @@ function home(){
   <div class="card"><h2>設定</h2>
   <button id="dem">需要入力</button><button id="preflight">計画実行可能性チェック</button><button id="optimizer">生産順序を自動比較</button><button id="allocation">曜日別生産計画を作成</button><button id="chatExport">ChatGPTへ計画データを出力</button><button id="lines">ライン設定</button><button id="products">製品設定</button><button id="materials">原料種類登録</button>
   <button id="trans">段取り設定</button><button id="sched">稼働時間設定</button><button id="config">計画条件を共有</button></div>
-  <div class="card"><div class="hint"><b>v35.21の基本計画原則</b><br>
-  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。⑪製品ごとの使用原料を管理し、段取りは原料切替パターンを漏れなく設定できる。⑫生産順序は候補を比較し、段取り・制約・稼働時間を含めて選定する。⑬採用した順序を曜日・稼働時間へ自動割付し、製品を可能な限り完了させてから次製品へ移る。⑭アプリは計画条件を管理・出力し、現場都合による対話的な計画調整はチャット側で行う。⑮原料切替マスターを正式な制約として優先し、製品単位の旧設定で切替不可を上書きしない。⑯月次の共有データは各週の需要を保持し、読み込み時も月次需要を失わない。</div></div>`;
+  <div class="card"><div class="hint"><b>v35.22の基本計画原則</b><br>
+  ①稼働可能時間を超えない　②切替不可能を守る　③段取り時間を差し引く　④需要未達を最小化　⑤余剰を抑える　⑥最低生産数量を倍数制約にしない　⑦最終残需要は最低数量未満でも生産可能なら完了させる　⑧曜日や特定の言い回しに依存しない　⑨結果だけでなく制約・不足理由を診断できる。⑩需要は週次または月次で入力し、月次では週別需要を保持して計画する。⑪製品ごとの使用原料を管理し、段取りは原料切替パターンを漏れなく設定できる。⑫生産順序は候補を比較し、段取り・制約・稼働時間を含めて選定する。⑬採用した順序を曜日・稼働時間へ自動割付し、製品を可能な限り完了させてから次製品へ移る。⑭アプリは計画条件を管理・出力し、現場都合による対話的な計画調整はチャット側で行う。⑮原料切替マスターを正式な制約として優先し、製品単位の旧設定で切替不可を上書きしない。⑯月次の共有データは各週の需要を保持し、読み込み時も月次需要を失わない。⑰ChatGPTへの出力は、計画条件と需要を一括したアップロード用データとして確実に保存できる。</div></div>`;
   document.getElementById("plan").onclick=planPage;
   document.getElementById("eval").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");showPlan(p)};
   document.getElementById("diag").onclick=()=>{const p=load(K.last,[]);if(!p.length)return alert("先に生産案を作成してください");const r=document.createElement("div");r.innerHTML=renderDiagnosis(p,demandRows());app.innerHTML=r.innerHTML+`<div class="card"><button class="gray" id="backDiag">戻る</button></div>`;document.getElementById("backDiag").onclick=home};
