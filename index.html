@@ -729,6 +729,9 @@ function allocationPage(){
   }
   h+=`<button class="green" id="exportPlan">この計画を採用</button><button class="gray" id="back">戻る</button></div>`;
   app.innerHTML=h;
+  app.insertAdjacentHTML("beforeend",settingsBackupCard());
+  document.getElementById("backupSettings").onclick=settingsBackup;
+  document.getElementById("restoreSettings").onclick=settingsRestore;
   document.getElementById("exportPlan").onclick=()=>{
     sessionStorage.setItem("aiSeisan_allocatedPlan",JSON.stringify(a));
     sessionStorage.setItem("aiSeisan_selectedOrder",JSON.stringify(order));
@@ -1072,6 +1075,30 @@ function transEditByMaterial(line,from,to){
   };
   document.getElementById("back").onclick=transPage;
 }
+
+function settingsBackup(){
+  const payload={backupType:'production-planning-settings',version:1,exportedAt:new Date().toISOString(),data:{lines,products,materials,transitions,schedules}};
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='生産計画_設定バックアップ_'+new Date().toISOString().slice(0,10)+'.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function settingsRestore(){
+  const input=document.createElement('input'); input.type='file'; input.accept='.json,application/json';
+  input.onchange=async()=>{const file=input.files&&input.files[0]; if(!file)return; try{
+    const p=JSON.parse(await file.text());
+    if(!p||p.backupType!=='production-planning-settings'||!p.data) return alert('このアプリの設定バックアップではありません。');
+    if(!confirm('現在の設定をバックアップデータで置き換えます。よろしいですか？'))return;
+    if(Array.isArray(p.data.lines))lines=p.data.lines;
+    if(Array.isArray(p.data.products))products=p.data.products;
+    if(Array.isArray(p.data.materials))materials=p.data.materials;
+    if(Array.isArray(p.data.transitions))transitions=p.data.transitions;
+    if(Array.isArray(p.data.schedules))schedules=p.data.schedules;
+    save(K.lines,lines); save(K.products,products); save(K.materials,materials); save(K.trans,transitions); save(K.schedules,schedules);
+    alert('設定データを復元しました。'); home();
+  }catch(e){console.error(e);alert('バックアップデータを読み込めませんでした。');}}; input.click();
+}
+function settingsBackupCard(){return `<div class="card"><h2>設定データのバックアップ</h2><div class="hint">製品・原料・ライン・段取り・稼働時間などの設定をファイルに保存し、アプリ更新や端末変更時に復元できます。</div><div class="row"><button class="green" id="backupSettings">📤 設定をバックアップ</button><button class="gray" id="restoreSettings">📥 設定を復元</button></div></div>`;}
+
 function schedulePage(){
   let h=`<div class="card"><h2>稼働時間設定</h2>`;
   lines.forEach((l,li)=>{const s=lineSchedule(li);h+=`<div class="item"><b>${esc(l.name)}</b>`;
