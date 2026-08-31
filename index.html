@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI生産計画 v35.23（計画データ管理・出力版）</title>
+<title>AI生産計画 v35.24（計画データ管理・出力版）</title>
 <style>
 body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{background:#1d4ed8;color:#fff;padding:18px 16px}.title{font-size:22px;font-weight:800;line-height:1.35}
@@ -47,7 +47,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid 
 </style></head>
 <body>
 <header>
-  <div class="title">AI生産計画 v35.23</div>
+  <div class="title">AI生産計画 v35.24</div>
   <div>v30基準・稼働時間／段取り／最低生産数量を守り、需要を満たせる計画を優先</div>
 </header>
 <main id="app"></main>
@@ -65,7 +65,7 @@ const esc=s=>String(s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&g
 
 let lines=load(K.lines,[]).map(x=>({...x,name:String(x.name||x.lineName||""),capacity:n(x.capacity??x.hourCapacity),lot:n(x.lot??x.minLot),workers:n(x.workers??x.personnel)})).filter(x=>x.name);
 let materials=load(K.materials,[]).map(x=>({...x,name:String(x.name||x.material||"").trim()})).filter(x=>x.name);
-let products=load(K.products,[]).map(x=>({...x,name:String(x.name||x.product||""),capacityOverride:n(x.capacityOverride),minLotOverride:n(x.minLotOverride),materialIds:Array.isArray(x.materialIds)?x.materialIds:[]})).filter(x=>x.name);
+let products=load(K.products,[]).map(x=>({...x,name:String(x.name||x.product||""),capacityOverride:n(x.capacityOverride),minLotOverride:n(x.minLotOverride),materialIds:Array.isArray(x.materialIds)?x.materialIds:[],allowedLineNames:Array.isArray(x.allowedLineNames)?x.allowedLineNames:[]})).filter(x=>x.name);
 let transitions=load(K.trans,[]).map(x=>({...x,allowed:x.allowed!==false,time:n(x.time)}));
 let demands=load(K.dem,[]);
 let schedules=load(K.schedules,[]);
@@ -84,8 +84,12 @@ function workMin(d){
   let x=mins(d.end)-mins(d.start);if(x<0)x+=1440;
   return Math.max(0,x-n(d.breakMin));
 }
-function prod(name){return products.find(p=>p.name===name)||{name,capacityOverride:0,minLotOverride:0}}
-function cap(line,p){return n(p.capacityOverride)||n(line.capacity)||0}
+function prod(name){return products.find(p=>p.name===name)||{name,capacityOverride:0,minLotOverride:0,allowedLineNames:[]}}
+function productCanRunOnLine(p,line){
+  const allowed=Array.isArray(p?.allowedLineNames)?p.allowedLineNames:[];
+  return !allowed.length || allowed.includes(line?.name);
+}
+function cap(line,p){return productCanRunOnLine(p,line)?(n(p.capacityOverride)||n(line.capacity)||0):0}
 function lot(line,p){return n(p.minLotOverride)||n(line.lot)||0}
 function materialNames(productName){
   const p=prod(productName);
@@ -396,7 +400,7 @@ function buildPlanExport(){
   }else{
     weeklyDemand.push({weekNo:1,startDate:meta.start||"",endDate:meta.end||"",demand:products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)}))});
   }
-  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.23",
+  return {schema:"ai-seisan-plan-data",schemaVersion:3,exportedAt:new Date().toISOString(),appVersion:"v35.24",
     plan:{id:meta.mode==="monthly"?`MONTH-${meta.start}-${meta.end}`:`WEEK-${new Date().toISOString().slice(0,10)}`,startDate:meta.start,endDate:meta.end,periodType:meta.mode,
       demand:meta.mode==="weekly"?products.map(p=>({product:p.name,quantity:n(demands.find(d=>d.product===p.name)?.quantity||0)})):[],
       weeklyDemand,dailyDemand:[],temporaryConstraints:[],recurringConstraints:[]},
@@ -409,7 +413,7 @@ function downloadPlanData(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
   a.href=url;
-  a.download="ai_seisan_plan_data_v35.22.json";
+  a.download="ai_seisan_plan_data_v35.24.json";
   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
 }
 function importPlanDataText(text){
@@ -471,7 +475,7 @@ function buildChatGPTPackage(){
   const demand=demandForCurrentWeek();
   return {
     schemaVersion:"1.0",
-    appVersion:"v35.23",
+    appVersion:"v35.24",
     purpose:"生産計画立案用データ",
     period:meta,
     masters:{lines,products,materials,transitions,schedules},
@@ -484,7 +488,7 @@ function buildChatGPTPackage(){
       completeWithinOneDayWhenPossible:true,
       carrySetupConstraintAcrossDays:false,
       chatRole:"現場都合による対話的な計画調整はチャット側で行う。",
-      appRole:"アプリは計画条件と需要を管理し、計画立案用データとして出力する。"
+      appRole:"アプリは計画条件と需要を管理し、計画立案用データとして出力する。製品ごとの生産可能ラインも含める。"
     }
   };
 }
@@ -562,10 +566,10 @@ function home(){
   <div class="card"><h2>基本設定</h2>
   <button id="lines">ライン設定</button><button id="products">製品設定</button><button id="materials">原料種類登録</button>
   <button id="trans">段取り設定</button><button id="sched">稼働時間設定</button><button id="config">計画条件を共有</button><button id="backup" class="green">📤 設定データをバックアップ</button><button id="restore" class="gray">📥 設定データを復元</button></div>
-  <div class="card"><div class="hint"><b>v35.23の役割分担</b><br>
+  <div class="card"><div class="hint"><b>v35.24の役割分担</b><br>
   アプリ：①製品・原料・ライン・段取り・稼働時間などの基本条件を管理　②週次／月次の需要を期間情報とともに管理　③計画条件と需要を一括してChatGPTへ出力。<br>
   ChatGPT：①計画実行可能性の確認　②生産順序の判断　③曜日別生産計画の立案　④不足や余裕の分析　⑤現場都合を対話で反映した全体再計画。<br>
-  計画時の基本条件：稼働可能時間を超えない／段取り時間を考慮する／原料切替制約を守る／1日最大2品種を基本とする／1日で収められる需要は原則として複数日に跨がせない／日終了後の清掃により翌日に段取り制約を持ち越さない。これらは今回の運用で確定した前提として、出力データにも保持します。</div></div>`;
+  計画時の基本条件：製品ごとの生産可能ラインを守る／稼働可能時間を超えない／段取り時間を考慮する／原料切替制約を守る／1日最大2品種を基本とする／1日で収められる需要は原則として複数日に跨がせない／日終了後の清掃により翌日に段取り制約を持ち越さない。これらは今回の運用で確定した前提として、出力データにも保持します。</div></div>`;
   document.getElementById("config").onclick=configPage;
   document.getElementById("backup").onclick=backupSettings;
   document.getElementById("restore").onclick=restoreSettings;
@@ -688,6 +692,7 @@ function allocateOrderToDays(order){
     for(const product of order){
       if(remain[product]<=0)continue;
       const p=prod(product);
+      if(!productCanRunOnLine(p,line))continue;
       const cap=productCapacity(p,line);
 
       // Determine setup from the product that was actually produced last.
@@ -1015,7 +1020,7 @@ function productsPage(){
   let h=`<div class="card"><h2>製品設定</h2><div class="hint">製品ごとに使用する原料を設定します。複数の原料を使う製品にも対応します。</div>`;
   products.forEach((p,i)=>{
     const names=(p.materialIds||[]).map(id=>materials.find(m=>m.id===id||m.name===id)?.name||id).filter(Boolean);
-    h+=`<div class="item"><b>${esc(p.name)}</b><br><span class="small">原料：${names.length?esc(names.join("・")):"未設定"}　／　能力 ${p.capacityOverride||"ライン標準"}・最低数量 ${p.minLotOverride||"ライン標準"}</span><button data-e="${i}">編集</button></div>`;
+    h+=`<div class="item"><b>${esc(p.name)}</b><br><span class="small">原料：${names.length?esc(names.join("・")):"未設定"}　／　生産可能ライン：${(p.allowedLineNames||[]).length?esc(p.allowedLineNames.join("・")):"全ライン"}　／　能力 ${p.capacityOverride||"ライン標準"}・最低数量 ${p.minLotOverride||"ライン標準"}</span><button data-e="${i}">編集</button></div>`;
   });
   h+=`<button class="green" id="add">＋製品追加</button><button class="gray" id="back">戻る</button></div>`;
   app.innerHTML=h;
@@ -1024,17 +1029,23 @@ function productsPage(){
   document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>productEdit(n(b.dataset.e)));
 }
 function productEdit(i){
-  const p=i>=0?products[i]:{name:"",capacityOverride:0,minLotOverride:0,materialIds:[]};
+  const p=i>=0?products[i]:{name:"",capacityOverride:0,minLotOverride:0,materialIds:[],allowedLineNames:[]};
   const checks=materials.map(m=>`<label class="materialcheck"><input type="checkbox" value="${esc(m.id)}" ${p.materialIds.includes(m.id)?"checked":""}><span>${esc(m.name)}</span></label>`).join("");
+  const lineChecks=lines.map(l=>`<label class="materialcheck"><input type="checkbox" class="linecheck" value="${esc(l.name)}" ${(p.allowedLineNames||[]).includes(l.name)?"checked":""}><span>${esc(l.name)}</span></label>`).join("");
   app.innerHTML=`<div class="card"><h2>製品設定</h2>
   <label>製品名<input id="name" value="${esc(p.name)}"></label>
   <label>能力（個/時・0=ライン標準）<input id="cap" type="number" value="${p.capacityOverride}"></label>
   <label>最低生産数量（0=ライン標準）<input id="lot" type="number" value="${p.minLotOverride}"></label>
+  <div class="item"><b>生産可能ライン</b>
+    <div class="hint">この製品を生産できるラインを選択してください。未選択の場合は、既存製品との互換性を保つため全ラインで生産可能として扱います。</div>
+    ${lines.length?`<div class="materialgrid">${lineChecks}</div>`:`<div class="warn">先に「ライン設定」でラインを登録してください。</div>`}
+  </div>
   <div class="item"><b>使用する原料</b>${materials.length?`<div class="materialgrid">${checks}</div>`:`<div class="hint">先に「原料種類登録」で原料を登録してください。</div>`}</div>
   <button class="green" id="save">保存</button><button class="gray" id="back">戻る</button></div>`;
   document.getElementById("save").onclick=()=>{
-    const selected=[...document.querySelectorAll('.materialcheck input:checked')].map(x=>x.value);
-    const o={...p,name:document.getElementById("name").value.trim(),capacityOverride:n(document.getElementById("cap").value),minLotOverride:n(document.getElementById("lot").value),materialIds:selected};
+    const selected=[...document.querySelectorAll('.materialcheck:not(.linecheck) input:checked')].map(x=>x.value);
+    const allowedLineNames=[...document.querySelectorAll('.linecheck:checked')].map(x=>x.value);
+    const o={...p,name:document.getElementById("name").value.trim(),capacityOverride:n(document.getElementById("cap").value),minLotOverride:n(document.getElementById("lot").value),materialIds:selected,allowedLineNames};
     if(!o.name)return alert("製品名を入力してください。");
     if(i<0)products.push(o);else products[i]=o;
     save(K.products,products);productsPage();
